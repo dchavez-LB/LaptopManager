@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Dimensions, StyleSheet, View } from 'react-native';
+import { Animated, Dimensions, StyleSheet, View, Platform } from 'react-native';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import { useNavigation, useNavigationState, useIsFocused } from '@react-navigation/native';
 
@@ -99,15 +99,12 @@ export default function SwipeableTabScreen({ children, prev, next, disableSwipeL
     }
   };
 
-  return (
-    <PanGestureHandler
-      onGestureEvent={onGestureEvent}
-      onHandlerStateChange={onHandlerStateChange}
-      activeOffsetX={[-10, 10]}
-      failOffsetY={[-15, 15]}
-    >
+  // En web, los gestures pueden interferir con onPress dentro de la pantalla.
+  // Dado que el foco principal es móvil, deshabilitamos el PanGesture en web
+  // para evitar conflictos de taps, manteniendo intacto el comportamiento en móvil.
+  if (Platform.OS === 'web') {
+    return (
       <View style={styles.container}>
-        {/* Peek anterior */}
         {prev && (
           <Animated.View
             pointerEvents="none"
@@ -116,11 +113,40 @@ export default function SwipeableTabScreen({ children, prev, next, disableSwipeL
             {prev}
           </Animated.View>
         )}
-        {/* Contenido actual */}
         <Animated.View style={[styles.current, { opacity, transform: [{ translateX }] }]}> 
           {children}
         </Animated.View>
-        {/* Peek siguiente */}
+        {next && (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.peek, { left: screenWidth, opacity: nextOpacity, transform: [{ translateX }] }]}
+          >
+            {next}
+          </Animated.View>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <PanGestureHandler
+      onGestureEvent={onGestureEvent}
+      onHandlerStateChange={onHandlerStateChange}
+      activeOffsetX={[-25, 25]}
+      failOffsetY={[-15, 15]}
+    >
+      <View style={styles.container}>
+        {prev && (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.peek, { left: -screenWidth, opacity: prevOpacity, transform: [{ translateX }] }]}
+          >
+            {prev}
+          </Animated.View>
+        )}
+        <Animated.View style={[styles.current, { opacity, transform: [{ translateX }] }]}> 
+          {children}
+        </Animated.View>
         {next && (
           <Animated.View
             pointerEvents="none"

@@ -1,4 +1,4 @@
-﻿import { 
+import { 
   collection, 
   doc, 
   addDoc, 
@@ -694,10 +694,52 @@ export class FirestoreService {
       const cleanUpdates = Object.fromEntries(
         Object.entries(updates || {}).filter(([, v]) => v !== undefined && v !== null)
       );
-      await updateDoc(userRef, cleanUpdates);
+      // Usar setDoc con merge para crear el documento si no existe y actualizar si existe
+      await setDoc(userRef, { ...cleanUpdates, updatedAt: Timestamp.now() }, { merge: true });
     } catch (error) {
       console.error('Error updating user profile:', error);
       throw error;
+    }
+  }
+
+  static subscribeToUserProfile(
+    userId: string,
+    callback: (user: User) => void
+  ): () => void {
+    try {
+      const ref = doc(db, this.USERS_COLLECTION, userId);
+      return onSnapshot(
+        ref,
+        (docSnap) => {
+          if (!docSnap.exists()) return;
+          const data: any = docSnap.data();
+          const createdAtField = data?.createdAt;
+          const lastLoginField = data?.lastLogin;
+          const user: User = {
+            id: docSnap.id,
+            email: data?.email,
+            name: data?.name,
+            role: data?.role,
+            department: data?.department,
+            photoURL: data?.photoURL ?? null,
+            createdAt:
+              createdAtField && typeof createdAtField.toDate === 'function'
+                ? createdAtField.toDate()
+                : new Date(),
+            lastLogin:
+              lastLoginField && typeof lastLoginField.toDate === 'function'
+                ? lastLoginField.toDate()
+                : new Date(),
+          };
+          callback(user);
+        },
+        (error) => {
+          console.error('Firestore listener error (user profile):', error);
+        }
+      );
+    } catch (error) {
+      console.error('Error creating user profile listener:', error);
+      return () => {};
     }
   }
 

@@ -116,6 +116,58 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
     // Aquí se guardarían las configuraciones localmente o en la nube
   };
 
+  // Mover handlers al alcance del componente para acceder al estado correctamente
+  const handleSaveProfile = async () => {
+    const name = editProfileForm.name.trim();
+    const department = editProfileForm.department.trim();
+    if (!name) {
+      Alert.alert('Error', 'El nombre no puede estar vacío');
+      return;
+    }
+    try {
+      await FirestoreService.updateUserProfile(user.id, {
+        name,
+        // Mantener cadena vacía si el usuario desea limpiar el campo
+        department,
+      });
+      setProfileDetails({ name, department });
+      setShowEditProfile(false);
+      Alert.alert('Perfil actualizado', 'Tu información personal se guardó correctamente');
+    } catch (error: any) {
+      const msg = error?.message || String(error);
+      const code = error?.code ? `\nCódigo: ${error.code}` : '';
+      Alert.alert('Error', `No se pudo actualizar el perfil.${code}\n${msg}`);
+    }
+  };
+
+  const handleContactSupport = async () => {
+    const mailto = 'mailto:soporte@byron.edu.pe?subject=Ayuda%20Laptop%20Manager&body=Describe%20tu%20consulta%20o%20problema';
+    try {
+      const supported = await Linking.canOpenURL(mailto);
+      if (supported) {
+        await Linking.openURL(mailto);
+      } else {
+        Alert.alert('Contacto', 'Escribe a: soporte@byron.edu.pe');
+      }
+    } catch (_) {
+      Alert.alert('Contacto', 'Escribe a: soporte@byron.edu.pe');
+    }
+  };
+
+  const handleRateApp = async () => {
+    const url = 'https://play.google.com/store/apps/details?id=com.laptopmanager';
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Gracias', 'Pronto habilitaremos la calificación en la tienda');
+      }
+    } catch (_) {
+      Alert.alert('Gracias', 'Pronto habilitaremos la calificación en la tienda');
+    }
+  };
+
   const MenuSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <View style={styles.menuSection}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -434,6 +486,7 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
             </View>
 
             <View style={styles.modalBody}>
+              <Text style={styles.inputLabel}>Nombre completo</Text>
               <TextInput
                 style={styles.passwordInput}
                 placeholder="Ej: Juan Pérez"
@@ -441,6 +494,7 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
                 value={editProfileForm.name}
                 onChangeText={(text) => setEditProfileForm({ ...editProfileForm, name: text })}
               />
+              <Text style={styles.inputLabel}>Área/Departamento (opcional)</Text>
               <TextInput
                 style={styles.passwordInput}
                 placeholder="Ej: Matemáticas, Dirección (opcional)"
@@ -677,6 +731,12 @@ const styles = StyleSheet.create({
   modalBody: {
     marginBottom: 20,
   },
+  inputLabel: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 6,
+    marginLeft: 4,
+  },
   passwordInput: {
     borderWidth: 1,
     borderColor: '#E0E0E0',
@@ -761,54 +821,5 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
 });
-
-
-  const handleSaveProfile = async () => {
-    const name = editProfileForm.name.trim();
-    const department = editProfileForm.department.trim();
-    if (!name) {
-      Alert.alert('Error', 'El nombre no puede estar vacío');
-      return;
-    }
-    try {
-      await FirestoreService.updateUserProfile(user.id, {
-        name,
-        department: department || undefined,
-      });
-      setProfileDetails({ name, department });
-      setShowEditProfile(false);
-      Alert.alert('Perfil actualizado', 'Tu información personal se guardó correctamente');
-    } catch (error) {
-      Alert.alert('Error', 'No se pudo actualizar el perfil');
-    }
-  };
-
-  const handleContactSupport = async () => {
-    const mailto = 'mailto:soporte@byron.edu.pe?subject=Ayuda%20Laptop%20Manager&body=Describe%20tu%20consulta%20o%20problema';
-    try {
-      const supported = await Linking.canOpenURL(mailto);
-      if (supported) {
-        await Linking.openURL(mailto);
-      } else {
-        Alert.alert('Contacto', 'Escribe a: soporte@byron.edu.pe');
-      }
-    } catch (_) {
-      Alert.alert('Contacto', 'Escribe a: soporte@byron.edu.pe');
-    }
-  };
-
-  const handleRateApp = async () => {
-    const url = 'https://play.google.com/store/apps/details?id=com.laptopmanager';
-    try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert('Gracias', 'Pronto habilitaremos la calificación en la tienda');
-      }
-    } catch (_) {
-      Alert.alert('Gracias', 'Pronto habilitaremos la calificación en la tienda');
-    }
-  };
 
 
