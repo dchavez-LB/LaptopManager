@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "LaptopManager",
+    "slug": "laptop-manager",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.byron.laptopmanager"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.byron.laptopmanager"
+    },
+    "scheme": "laptopmanager",
+    "extra": {
+      "google": {
+        "expoClientId": "684466767843-kqonlq5ubolegg468v2ggkrqov5tuk33.apps.googleusercontent.com",
+        "androidClientId": "684466767843-o25qbeh6ogqolbj73j30hlsvu2lsvje8.apps.googleusercontent.com",
+        "iosClientId": ""
+      },
+      "eas": {
+        "projectId": "d7aaf099-2c39-45ea-a19e-6963f2872b9d"
+      }
+    },
+    "plugins": [
+      "expo-web-browser",
+      "expo-secure-store",
+      "expo-barcode-scanner"
+    ]
+  }
+}

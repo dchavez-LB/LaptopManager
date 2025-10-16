@@ -1,0 +1,188 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Función para verificar si el usuario es del dominio de Byron
+    function isByronUser() {
+      return request.auth != null &&
+             request.auth.token.email != null &&
+             request.auth.token.email.matches('.*@byron.edu.pe$');
+    }
+    
+    // Función para verificar si el usuario es soporte técnico
+    function isSupportUser() {
+      return request.auth != null && 
+             request.auth.token.email in [
+               'dchavez@byron.edu.pe',
+               'lricra@byron.edu.pe', 
+               'phuamani@byron.edu.pe'
+             ];
+    }
+    
+    // Función para verificar si el usuario es profesor
+    function isTeacher() {
+      return isByronUser() && !isSupportUser();
+    }
+    
+    // Función para verificar si es el mismo usuario
+    function isOwner(email) {
+      return request.auth != null && request.auth.token.email == email;
+    }
+
+    // ==================== USUARIOS ====================
+    match /users/{userId} {
+      // Los usuarios pueden leer y escribir su propia información
+      allow read, write: if request.auth != null && 
+                            request.auth.uid == userId &&
+                            // Permitir también a soporte (incluye usuario de prueba)
+                            (isByronUser() || isSupportUser());
+      
+      // El soporte técnico puede leer todos los usuarios
+      allow read: if isSupportUser();
+    }
+
+    // ==================== LAPTOPS ====================
+    match /laptops/{laptopId} {
+      // El soporte técnico puede hacer todo con las laptops
+      allow read, write: if isSupportUser();
+      
+      // Los profesores solo pueden leer las laptops disponibles
+      allow read: if isTeacher() && 
+                     resource.data.status == 'available';
+
+      // Permitir que profesores actualicen estado a 'loaned' SOLO para préstamos de salón
+      // Restringimos los campos y verificamos que la asignación sea a un salón
+      allow update: if isTeacher() &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status','assignedTo','currentUser','lastLoanDate','location','updatedAt']) &&
+                       request.resource.data.status == 'loaned' &&
+                       request.resource.data.assignedTo.matches('Salón .*') &&
+                       request.resource.data.updatedAt >= resource.data.updatedAt;
+
+      // Permitir que profesores registren devoluciones: cambiar de 'loaned' a 'available'
+      // Solo se permiten cambios de metadatos relacionados al retorno
+      allow update: if isTeacher() &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status','assignedTo','currentUser','location','updatedAt','lastLoanDate','lastReturnDate']) &&
+                       resource.data.status == 'loaned' &&
+                       request.resource.data.status == 'available' &&
+                       request.resource.data.updatedAt >= resource.data.updatedAt;
+    }
+
+    // ==================== REGISTROS DE PRÉSTAMOS ====================
+    match /loanRecords/{recordId} {
+      // El soporte técnico puede hacer todo
+      allow read, write: if isSupportUser();
+      
+      // Los profesores pueden leer sus propios registros
+      allow read: if isTeacher() && 
+                     isOwner(resource.data.teacherEmail);
+      
+      // Permitir que profesores creen registros SOLO para préstamos de salón
+      allow create: if isTeacher() &&
+                       request.resource.data.teacherEmail == 'classroom@byron.edu.pe' &&
+                       request.resource.data.classroom != null &&
+                       request.resource.data.destination.matches('Salón .*') &&
+                       request.resource.data.status == 'active';
+
+      // Permitir que profesores marquen devoluciones de sus propios préstamos
+      // o de préstamos de salón (teacherEmail == 'classroom@byron.edu.pe')
+      allow update: if isTeacher() &&
+                       (
+                         isOwner(resource.data.teacherEmail) ||
+                         resource.data.teacherEmail == 'classroom@byron.edu.pe'
+                       ) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status','returnDate','updatedAt','returnedById','notes','receivedByEmail','laptopId']) &&
+                       request.resource.data.status == 'returned';
+    }
+
+    // ==================== SOLICITUDES DE PRÉSTAMO ====================
+    match /loanRequests/{requestId} {
+      // El soporte técnico puede hacer todo
+      allow read, write: if isSupportUser();
+      
+      // Los profesores pueden crear y leer sus propias solicitudes
+      allow create: if isTeacher() && 
+                       isOwner(request.resource.data.teacherEmail);
+      
+      allow read: if isTeacher() && 
+                     isOwner(resource.data.teacherEmail);
+      
+      // Los profesores pueden actualizar solo ciertos campos de sus solicitudes
+      allow update: if isTeacher() && 
+                       isOwner(resource.data.teacherEmail) &&
+                       // Solo pueden cambiar estos campos
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['notes', 'updatedAt']) &&
+                       // Y solo si la solicitud está pendiente
+                       resource.data.status == 'pending';
+    }
+
+    // ==================== SOLICITUDES DE SOPORTE ====================
+    match /supportRequests/{requestId} {
+      // El soporte técnico puede hacer todo
+      allow read, write: if isSupportUser();
+      
+      // Los profesores pueden crear y leer sus propias solicitudes
+      allow create: if isTeacher() && 
+                       isOwner(request.resource.data.teacherEmail);
+      
+      allow read: if isTeacher() && 
+                     isOwner(resource.data.teacherEmail);
+      
+      // Los profesores pueden actualizar solo ciertos campos de sus solicitudes
+      allow update: if isTeacher() && 
+                       isOwner(resource.data.teacherEmail) &&
+                       // Solo pueden cambiar estos campos
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['description', 'updatedAt']) &&
+                       // Y solo si la solicitud está pendiente
+                       resource.data.status == 'pending';
+    }
+
+    // ==================== CONFIGURACIONES ====================
+    match /config/{configId} {
+      // Solo el soporte técnico puede leer y escribir configuraciones
+      allow read, write: if isSupportUser();
+    }
+
+    // ==================== ESTADÍSTICAS ====================
+    match /statistics/{statId} {
+      // Solo el soporte técnico puede escribir estadísticas
+      allow write: if isSupportUser();
+      
+      // Todos los usuarios autenticados pueden leer estadísticas básicas
+      // En modo prueba: permitir lectura a cualquier usuario autenticado
+      allow read: if isByronUser();
+    }
+
+    // ==================== LOGS Y AUDITORÍA ====================
+    match /logs/{logId} {
+      // Solo el soporte técnico puede acceder a los logs
+      allow read, write: if isSupportUser();
+    }
+
+    // ==================== NOTIFICACIONES ====================
+    match /notifications/{notificationId} {
+      // Los usuarios pueden leer sus propias notificaciones
+      allow read: if request.auth != null && 
+                     isOwner(resource.data.userEmail);
+      
+      // El soporte técnico puede crear notificaciones
+      allow create: if isSupportUser();
+      
+      // Los usuarios pueden marcar sus notificaciones como leídas
+      allow update: if request.auth != null && 
+                       isOwner(resource.data.userEmail) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['read', 'readAt']);
+    }
+
+    // ==================== REGLAS POR DEFECTO ====================
+    // Denegar acceso a cualquier otra colección no especificada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
