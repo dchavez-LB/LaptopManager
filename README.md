@@ -234,13 +234,7 @@ Para soporte técnico, contactar a:
 - **Luis Ricra**: lricra@byron.edu.pe  
 - **Pedro Huamaní**: phuamani@byron.edu.pe
 
-## 📄 Licencia
-
-Este proyecto es propiedad del Colegio Byron y está destinado exclusivamente para uso interno de la institución.
-
----
-
-**Desarrollado con ❤️ para el Colegio Byron**
+**Desarrollado con ❤️ para el Colegio Lord Byron**
 ## ☁️ Cloud Functions (Sincronización de profesores)
 
 Para que los correos institucionales nuevos aparezcan automáticamente en la lista de profesores, se añadió una Cloud Function que sincroniza usuarios de Firebase Auth hacia la colección `users` en Firestore.
