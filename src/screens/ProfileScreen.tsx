@@ -333,21 +333,24 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
             <View style={styles.modalBody}>
               <TextInput
                 style={styles.passwordInput}
-                placeholder="Contraseña actual"
+                placeholder="Escribe tu contraseña actual"
+                placeholderTextColor={colors.textSecondary}
                 value={passwordForm.currentPassword}
                 onChangeText={(text) => setPasswordForm({ ...passwordForm, currentPassword: text })}
                 secureTextEntry
               />
               <TextInput
                 style={styles.passwordInput}
-                placeholder="Nueva contraseña"
+                placeholder="Ingresa una nueva contraseña (mín. 6 caracteres)"
+                placeholderTextColor={colors.textSecondary}
                 value={passwordForm.newPassword}
                 onChangeText={(text) => setPasswordForm({ ...passwordForm, newPassword: text })}
                 secureTextEntry
               />
               <TextInput
                 style={styles.passwordInput}
-                placeholder="Confirmar nueva contraseña"
+                placeholder="Confirma la nueva contraseña"
+                placeholderTextColor={colors.textSecondary}
                 value={passwordForm.confirmPassword}
                 onChangeText={(text) => setPasswordForm({ ...passwordForm, confirmPassword: text })}
                 secureTextEntry
@@ -433,13 +436,15 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
             <View style={styles.modalBody}>
               <TextInput
                 style={styles.passwordInput}
-                placeholder="Nombre"
+                placeholder="Ej: Juan Pérez"
+                placeholderTextColor={colors.textSecondary}
                 value={editProfileForm.name}
                 onChangeText={(text) => setEditProfileForm({ ...editProfileForm, name: text })}
               />
               <TextInput
                 style={styles.passwordInput}
-                placeholder="Departamento (opcional)"
+                placeholder="Ej: Matemáticas, Dirección (opcional)"
+                placeholderTextColor={colors.textSecondary}
                 value={editProfileForm.department}
                 onChangeText={(text) => setEditProfileForm({ ...editProfileForm, department: text })}
               />

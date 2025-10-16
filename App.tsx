@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +14,8 @@ import { colors } from './src/utils/colors';
 import { User } from './src/types/User';
 import { AuthService } from './src/services/AuthService';
 import LaptopCatalogScreen from './src/screens/LaptopCatalogScreen';
+import SwipeableTabScreen from './src/components/SwipeableTabScreen';
+import TabIcon from './src/components/TabIcon';
 
 const Tab = createBottomTabNavigator();
 
@@ -56,13 +59,16 @@ export default function App() {
 
   if (!user) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <LoginScreen onLogin={handleLogin} />
-      </View>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <LoginScreen onLogin={handleLogin} />
+        </View>
+      </GestureHandlerRootView>
     );
   }
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <NavigationContainer>
       <Tab.Navigator initialRouteName="Inicio"
         screenOptions={({ route }) => ({
@@ -70,14 +76,22 @@ export default function App() {
           tabBarActiveTintColor: colors.primary,
           tabBarInactiveTintColor: colors.textSecondary,
           tabBarStyle: { backgroundColor: colors.surface },
-          tabBarIcon: ({ color, size }) => {
+          tabBarIcon: ({ focused, color, size }) => {
             let iconName: keyof typeof Ionicons.glyphMap = 'home-outline';
             if (route.name === 'Inicio') iconName = 'home-outline';
             else if (route.name === 'Historial') iconName = 'time-outline';
             else if (route.name === 'Solicitudes') iconName = 'document-text-outline';
             else if (route.name === 'Escanear') iconName = 'scan-outline';
             else if (route.name === 'Perfil') iconName = 'person-circle-outline';
-            return <Ionicons name={iconName} size={size} color={color} />;
+            return (
+              <TabIcon
+                focused={focused}
+                color={color}
+                size={size}
+                iconName={iconName as any}
+                dotColor={colors.primary}
+              />
+            );
           }
         })}
       >
@@ -87,20 +101,77 @@ export default function App() {
         )}
         {user.role === 'teacher' ? (
           <>
-            <Tab.Screen name="Inicio" children={() => <HomeScreen user={user} />} />
-            <Tab.Screen name="Historial" children={() => <HistoryScreen user={user} />} />
-            <Tab.Screen name="Solicitudes" children={() => <RequestScreen user={user} />} />
-            <Tab.Screen name="Perfil" children={() => <ProfileScreen user={user} onLogout={handleLogout} />} />
+            <Tab.Screen name="Inicio" children={() => (
+              <SwipeableTabScreen
+                disableSwipeRight
+                next={<HistoryScreen user={user} />}
+              >
+                <HomeScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Historial" children={() => (
+              <SwipeableTabScreen
+                prev={<HomeScreen user={user} />}
+                next={<RequestScreen user={user} />}
+              >
+                <HistoryScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Solicitudes" children={() => (
+              <SwipeableTabScreen
+                prev={<HistoryScreen user={user} />}
+                next={<ProfileScreen user={user} onLogout={handleLogout} />}
+              >
+                <RequestScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Perfil" children={() => (
+              <SwipeableTabScreen
+                disableSwipeLeft
+                prev={<RequestScreen user={user} />}
+              >
+                <ProfileScreen user={user} onLogout={handleLogout} />
+              </SwipeableTabScreen>
+            )} />
           </>
         ) : (
           <>
-            <Tab.Screen name="Inicio" children={() => <HomeScreen user={user} />} />
-            <Tab.Screen name="Historial" children={() => <HistoryScreen user={user} />} />
-            <Tab.Screen name="Escanear" children={() => <ScanScreen user={user} />} />
-            <Tab.Screen name="Perfil" children={() => <ProfileScreen user={user} onLogout={handleLogout} />} />
+            <Tab.Screen name="Inicio" children={() => (
+              <SwipeableTabScreen
+                disableSwipeRight
+                next={<HistoryScreen user={user} />}
+              >
+                <HomeScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Historial" children={() => (
+              <SwipeableTabScreen
+                prev={<HomeScreen user={user} />}
+                next={<ScanScreen user={user} />}
+              >
+                <HistoryScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Escanear" children={() => (
+              <SwipeableTabScreen
+                prev={<HistoryScreen user={user} />}
+                next={<ProfileScreen user={user} onLogout={handleLogout} />}
+              >
+                <ScanScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Perfil" children={() => (
+              <SwipeableTabScreen
+                disableSwipeLeft
+                prev={<ScanScreen user={user} />}
+              >
+                <ProfileScreen user={user} onLogout={handleLogout} />
+              </SwipeableTabScreen>
+            )} />
           </>
         )}
       </Tab.Navigator>
     </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }
