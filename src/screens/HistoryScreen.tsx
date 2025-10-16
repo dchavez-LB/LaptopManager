@@ -47,6 +47,8 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
   const [showSupportDetails, setShowSupportDetails] = useState(false);
   const [actionsRecordId, setActionsRecordId] = useState<string | null>(null);
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
+  // Estado de grupos desplegables por salón
+  const [expandedRooms, setExpandedRooms] = useState<Record<string, boolean>>({});
   const route = useRoute<any>();
   const initialTabParam = route.params?.initialTab as 'loans' | 'support' | undefined;
   const [activeTab, setActiveTab] = useState<'loans' | 'support'>(initialTabParam || 'loans');
@@ -198,6 +200,86 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     setFilteredRecords(filtered);
   };
 
+  // Agrupar por salón los registros clasificados como préstamos de aula
+  const classroomGroups = React.useMemo(() => {
+    const map: Record<string, LoanRecord[]> = {};
+    filteredRecords.forEach((record) => {
+      if (isClassroomLoan(record)) {
+        let room = String(record.classroom || '').trim();
+        const destRaw = String(record.destination || '').trim();
+        if (!room && destRaw) {
+          const destNorm = destRaw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          room = destNorm.replace(/^\s*(Salon|Aula)\s*:?\s*/i, '');
+        }
+        const key = room || 'Salón';
+        if (!map[key]) map[key] = [];
+        map[key].push(record);
+      }
+    });
+    return map;
+  }, [filteredRecords]);
+
+  // Lista sin préstamos de salón para evitar duplicación en la sección de grupos
+  const nonClassroomRecords = React.useMemo(() => {
+    return filteredRecords.filter((r) => !isClassroomLoan(r));
+  }, [filteredRecords]);
+
+  // Devolver todas las laptops de un grupo (solo soporte)
+  const handleReturnGroup = async (roomKey: string) => {
+    if (user.role !== 'support') return;
+    const group = classroomGroups[roomKey] || [];
+    const pending = group.filter((r) => r.status !== 'returned');
+    if (pending.length === 0) {
+      setToastMessage('No hay préstamos activos en este salón');
+      setTimeout(() => setToastMessage(null), 2000);
+      return;
+    }
+    setIsReturning(true);
+    try {
+      const now = Timestamp.now();
+      for (const record of pending) {
+        try {
+          // Marcar registro como devuelto
+          await FirestoreService.returnLaptop(record.id, {
+            status: 'returned',
+            returnDate: now,
+            returnedById: user.id,
+            laptopId: record.laptopId,
+          });
+          // Resolver laptop y marcar disponible en inventario
+          const info = laptopsById[record.laptopId] || {};
+          const key = (info.name || record.laptopId || '').trim();
+          // Intento rápido
+          const fastId = resolveLaptopIdFast(key);
+          let targetId = fastId || null;
+          if (!targetId) {
+            try {
+              const target = await FirestoreService.resolveLaptopByNameOnly(key);
+              targetId = target?.id || null;
+            } catch (_) {
+              // Ignorar errores de resolución; fallback a laptopId original
+            }
+          }
+          const updateTargetId = targetId || record.laptopId;
+          await FirestoreService.updateLaptop(updateTargetId, {
+            status: 'available',
+            assignedTo: null,
+            currentUser: null,
+            lastReturnDate: now,
+            location: 'Inventario',
+          });
+        } catch (e) {
+          console.warn('Error devolviendo en grupo:', e);
+        }
+      }
+      setToastMessage(`Devueltos ${pending.length} préstamo(s) de ${roomKey}`);
+      setTimeout(() => setToastMessage(null), 2000);
+      try { await DailyStatsService.increment('returns', pending.length); } catch (_) {}
+    } finally {
+      setIsReturning(false);
+    }
+  };
+
   const applySupportFilters = () => {
     let filtered = [...supportRequests];
     if (filters.status !== 'all') {
@@ -306,6 +388,19 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     }
   };
 
+  // Obtener timestamp del préstamo para ordenar por recencia
+  const getRecordTimestamp = (r: LoanRecord): number => {
+    try {
+      const d = (r as any)?.loanDate?.toDate
+        ? (r as any).loanDate.toDate()
+        : new Date((r as any)?.loanDate);
+      const t = d instanceof Date && isFinite(d.getTime()) ? d.getTime() : 0;
+      return t;
+    } catch {
+      return 0;
+    }
+  };
+
   const getLaptopDisplayName = (id: string) => {
     const info = laptopsById[id];
     const brandModel = `${info?.brand || ''} ${info?.model || ''}`.trim();
@@ -340,10 +435,20 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     return null;
   };
 
-  const isClassroomLoan = (record: LoanRecord) => {
-    const email = (record.teacherEmail || '').toLowerCase();
-    return email === 'classroom@byron.edu.pe' || !!record.classroom || (record.purpose || '').includes('classroom');
-  };
+  function isClassroomLoan(record: LoanRecord): boolean {
+    const classroom = String(record.classroom || '').trim();
+    const destRaw = String(record.destination || '').trim();
+    const purpose = String(record.purpose || '').toLowerCase();
+    let destNormalized = '';
+    try {
+      destNormalized = destRaw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    } catch {
+      destNormalized = destRaw.toLowerCase();
+    }
+    // Detectar por campo classroom, destino que contenga 'salon' o 'aula',
+    // y compatibilidad con purpose que incluya 'classroom'
+    return !!classroom || destNormalized.includes('salon') || destNormalized.includes('aula') || purpose.includes('classroom');
+  }
 
   // UI temporal para verificar la devolución
   const [isReturning, setIsReturning] = useState<boolean>(false);
@@ -488,7 +593,13 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
         <View style={styles.recordInfo}>
           <Text style={styles.laptopId}>{getLaptopDisplayName(item.laptopId)}</Text>
           {isClassroomLoan(item) ? (
-            <Text style={styles.teacherEmail}>Aula: {item.classroom || (item.destination || '').replace('Salón ', '')}</Text>
+            <Text style={styles.teacherEmail}>Aula: {(() => {
+              const classroom = String(item.classroom || '').trim();
+              if (classroom) return classroom;
+              const destRaw = String(item.destination || '').trim();
+              const destNorm = destRaw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              return destNorm.replace(/^\s*(Salon|Aula)\s*:?\s*/i, '');
+            })()}</Text>
           ) : (
             <Text style={styles.teacherEmail}>{item.teacherEmail}</Text>
           )}
@@ -609,6 +720,67 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     </TouchableOpacity>
   );
 
+  // Unificar grupos de aula y préstamos individuales en una línea de tiempo por recencia
+  type TimelineItem =
+    | { kind: 'group'; room: string; records: LoanRecord[]; latest: number }
+    | { kind: 'record'; record: LoanRecord; latest: number };
+
+  const timelineItems: TimelineItem[] = React.useMemo(() => {
+    const items: TimelineItem[] = [];
+    for (const [room, records] of Object.entries(classroomGroups)) {
+      const latest = records.reduce((max, rec) => Math.max(max, getRecordTimestamp(rec)), 0);
+      items.push({ kind: 'group', room, records, latest });
+    }
+    for (const rec of nonClassroomRecords) {
+      items.push({ kind: 'record', record: rec, latest: getRecordTimestamp(rec) });
+    }
+    items.sort((a, b) => b.latest - a.latest);
+    return items;
+  }, [classroomGroups, nonClassroomRecords]);
+
+  // Renderizador unificado de línea de tiempo
+  const renderTimelineItem = ({ item }: { item: TimelineItem }) => {
+    if (item.kind === 'record') {
+      return renderLoanRecord({ item: item.record });
+    }
+    const { room, records } = item;
+    const activeCount = records.filter(r => r.status !== 'returned').length;
+    const isExpanded = !!expandedRooms[room];
+    return (
+      <View style={styles.groupWrapper}>
+        <TouchableOpacity
+          style={styles.groupHeaderCard}
+          onPress={() => setExpandedRooms(prev => ({ ...prev, [room]: !prev[room] }))}
+        >
+          <View style={styles.groupHeaderTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.groupTitle}>Aula: {room}</Text>
+              <Text style={styles.groupSubtitle}>{records.length} equipo(s){activeCount > 0 ? ` • ${activeCount} activo(s)` : ''}</Text>
+            </View>
+            <Ionicons name={isExpanded ? 'chevron-down' : 'chevron-forward'} size={20} color={colors.textSecondary} />
+          </View>
+          {user.role === 'support' && activeCount > 0 && (
+            <View style={styles.groupActionsRow}>
+              <TouchableOpacity style={[styles.actionButton, styles.actionButtonReturn]} onPress={() => handleReturnGroup(room)}>
+                <Ionicons name="checkmark-done-outline" size={16} color={colors.surface} />
+                <Text style={styles.actionButtonText}>Devolver todas</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </TouchableOpacity>
+        {isExpanded && (
+          <View style={styles.groupItems}>
+            {records.map((rec) => (
+              <View key={rec.id} style={{ marginBottom: 12 }}>
+                {renderLoanRecord({ item: rec })}
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -712,25 +884,27 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       {/* Records List */}
       {activeTab === 'loans' ? (
         <FlatList
-          data={filteredRecords}
-          renderItem={renderLoanRecord}
-          keyExtractor={(item) => item.id}
+          data={timelineItems}
+          renderItem={renderTimelineItem}
+          keyExtractor={(item) => item.kind === 'group' ? `group:${item.room}` : item.record.id}
           style={styles.recordsList}
           contentContainerStyle={styles.recordsContent}
           refreshControl={
             <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Ionicons name="document-text-outline" size={64} color={colors.textSecondary} />
-              <Text style={styles.emptyText}>No hay registros</Text>
-              <Text style={styles.emptySubtext}>
-                {filters.searchTerm || filters.status !== 'all' || filters.dateRange !== 'all'
-                  ? 'Intenta ajustar los filtros'
-                  : 'Los préstamos aparecerán aquí'
-                }
-              </Text>
-            </View>
+            timelineItems.length > 0 ? null : (
+              <View style={styles.emptyState}>
+                <Ionicons name="document-text-outline" size={64} color={colors.textSecondary} />
+                <Text style={styles.emptyText}>No hay registros</Text>
+                <Text style={styles.emptySubtext}>
+                  {filters.searchTerm || filters.status !== 'all' || filters.dateRange !== 'all'
+                    ? 'Intenta ajustar los filtros'
+                    : 'Los préstamos aparecerán aquí'
+                  }
+                </Text>
+              </View>
+            )
           }
         />
       ) : (
@@ -1236,5 +1410,57 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
+  },
+  // Grupos por salón
+  groupSection: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    backgroundColor: colors.surface,
+  },
+  groupSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  groupWrapper: {
+    marginBottom: 12,
+  },
+  groupHeaderCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  groupHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  groupTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  groupSubtitle: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  groupActionsRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+  },
+  groupItems: {
+    marginTop: 8,
+    paddingLeft: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: '#EEEEEE',
   },
 });

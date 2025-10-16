@@ -268,6 +268,9 @@ function ScanScreen(props: ScanScreenProps) {
     try { blockedCodesRef.current.clear(); } catch {}
     setCameraError(null);
     setScanned(false);
+    // Reiniciar el estado de flujo de salón para empezar limpio
+    try { setClassroomBarcodes([]); } catch {}
+    try { setLaptopLookup({}); } catch {}
     setShowScanner(true);
   };
 
@@ -277,18 +280,23 @@ function ScanScreen(props: ScanScreenProps) {
       // Para flujo de salón en nativo: acumular y continuar escaneando
       if (flowType === 'classroom') {
         // Evitar re-escaneo del mismo código en ráfagas
-        if (lastScanCodeRef.current === data && scanRearmTimeRef.current && Date.now() < (scanRearmTimeRef.current || 0)) {
+        const trimmed = String(data || '').trim();
+        if (!trimmed) return;
+        if (lastScanCodeRef.current === trimmed && scanRearmTimeRef.current && Date.now() < (scanRearmTimeRef.current || 0)) {
           return;
         }
-        lastScanCodeRef.current = data;
+        lastScanCodeRef.current = trimmed;
         scanRearmTimeRef.current = Date.now() + 900;
         // Añadir a la lista si no existe
-        setClassroomBarcodes((prev) => (prev.includes(data) ? prev : [...prev, data]));
+        setClassroomBarcodes((prev) => {
+          const next = trimmed;
+          return prev.includes(next) ? prev : [...prev, next];
+        });
         // Resolver información de laptop para mostrar nombre/modelo en la lista
         try {
-          const laptop = await FirestoreService.getLaptopByBarcode(data);
+          const laptop = await FirestoreService.getLaptopByBarcode(trimmed);
           if (laptop) {
-            setLaptopLookup((prev) => ({ ...prev, [data]: { name: (laptop as any)?.name, brand: (laptop as any)?.brand, model: laptop.model } }));
+            setLaptopLookup((prev) => ({ ...prev, [trimmed]: { name: (laptop as any)?.name, brand: (laptop as any)?.brand, model: laptop.model } }));
           }
         } catch (e) {
           // No bloquear por fallos de lookup
@@ -533,7 +541,8 @@ const handleManualSubmit = () => {
   }
     try {
       setIsProcessing(true);
-      const codes = [...classroomBarcodes];
+      // Normalizar y desduplicar códigos para contabilizar correctamente
+      const codes = Array.from(new Set(classroomBarcodes.map(c => String(c || '').trim()).filter(Boolean)));
       const room = classroomName.trim();
     // Cerrar el modal y limpiar para percepción de rapidez (flujo optimista)
     setShowClassroomModal(false);
@@ -733,7 +742,9 @@ const handleManualSubmit = () => {
             scannerControlsRef.current = controls;
           }
           if (result) {
-            const text = result.getText();
+            const raw = result.getText();
+            const text = String(raw || '').trim();
+            if (!text) return;
             // Para flujo de salón: acumular y seguir escaneando
             if (flowType === 'classroom') {
               setClassroomBarcodes((prev) => (prev.includes(text) ? prev : [...prev, text]));
