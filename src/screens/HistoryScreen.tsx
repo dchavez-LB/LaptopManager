@@ -90,15 +90,9 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     return () => { unsubscribe && unsubscribe(); };
   }, [user.role, user.email]);
 
-  // Purga automática de registros 'Devueltos' al entrar a Préstamos (solo soporte)
-  useEffect(() => {
-    const shouldPurge = activeTab === 'loans' && user.role === 'support';
-    if (!shouldPurge) return;
-    // Ejecutar en segundo plano; errores se registran pero no bloquean la UI
-    FirestoreService.purgeReturnedLoanRecords().catch((err) => {
-      console.warn('Purge returned loan records failed:', err);
-    });
-  }, [activeTab, user.role]);
+  // Eliminado: no purgar automáticamente registros 'Devueltos'.
+  // Los registros de devoluciones deben permanecer para historial.
+  // Si en el futuro se requiere limpieza, se hará desde una acción manual.
 
   // Suscripción al inventario para resolver nombres de laptops
   useEffect(() => {

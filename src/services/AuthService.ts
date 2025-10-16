@@ -1,4 +1,4 @@
-﻿import { initializeApp } from 'firebase/app';
+import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
@@ -236,6 +236,7 @@ class AuthServiceClass {
 
     let userDocExists = false;
     let existingCreatedAt: Date | null = null;
+    let existingName: string | null = null;
 
     try {
       const userDoc = await this.withTimeout(getDoc(userRef), 5000);
@@ -245,20 +246,28 @@ class AuthServiceClass {
         existingCreatedAt = createdAtField && typeof createdAtField.toDate === 'function'
           ? createdAtField.toDate()
           : null;
+        const nameField = userDoc.data().name;
+        existingName = typeof nameField === 'string' ? nameField : null;
       }
     } catch (error: any) {
       console.warn('Firestore getDoc falló/timeout, posiblemente offline:', error?.message || error);
       userDocExists = false;
       existingCreatedAt = null;
+      existingName = null;
     }
 
     const role = this.determineUserRole(firebaseUser.email!);
     const now = new Date();
 
+    // Preservar nombre existente si está guardado; en su defecto usar displayName o prefijo del email
+    const resolvedName = (existingName && existingName.trim())
+      ? existingName
+      : (firebaseUser.displayName || firebaseUser.email!.split('@')[0]);
+
     const userData: User = {
       id: firebaseUser.uid,
       email: firebaseUser.email!,
-      name: firebaseUser.displayName || firebaseUser.email!.split('@')[0],
+      name: resolvedName,
       role: role,
       photoURL: firebaseUser.photoURL ?? null,
       createdAt: userDocExists && existingCreatedAt ? existingCreatedAt : now,
@@ -271,11 +280,18 @@ class AuthServiceClass {
     ) as Partial<User>;
 
     // No bloquear el flujo de login: escritura en background con manejo de errores
-    setDoc(userRef, {
+    // Evitar sobrescribir el nombre durante el login: solo escribir 'name' si el documento no existe
+    const baseWrite: Partial<User> = {
       ...normalizedUserData,
       createdAt: userDocExists && existingCreatedAt ? existingCreatedAt : now,
       lastLogin: now
-    }, { merge: true })
+    };
+
+    const writePayload = userDocExists
+      ? baseWrite
+      : { ...baseWrite, name: resolvedName };
+
+    setDoc(userRef, writePayload, { merge: true })
       .catch(async (error: any) => {
         console.warn('Firestore setDoc falló (Write stream) o timeout. Se intentará sincronizar más tarde.', error?.message || error);
         // Eliminado: no desactivar la red para evitar bloquear lecturas posteriores

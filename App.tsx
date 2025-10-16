@@ -13,6 +13,7 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import { colors } from './src/utils/colors';
 import { User } from './src/types/User';
 import { AuthService } from './src/services/AuthService';
+import { FirestoreService } from './src/services/FirestoreService';
 import LaptopCatalogScreen from './src/screens/LaptopCatalogScreen';
 import SwipeableTabScreen from './src/components/SwipeableTabScreen';
 import TabIcon from './src/components/TabIcon';
@@ -39,6 +40,32 @@ export default function App() {
     })();
     return () => { isMounted = false; };
   }, []);
+
+  // Suscribirse a cambios del perfil del usuario para reflejar nombre y otros datos en la UI
+  useEffect(() => {
+    if (!user?.id) return;
+    const unsubscribe = FirestoreService.subscribeToUserProfile(user.id, (updated) => {
+      setUser((prev) => {
+        // Si no había usuario previo, establece completamente
+        if (!prev) return updated;
+        // Actualiza campos que pueden cambiar desde perfil
+        return {
+          ...prev,
+          name: updated.name,
+          department: updated.department,
+          photoURL: updated.photoURL,
+          lastLogin: updated.lastLogin,
+          createdAt: updated.createdAt,
+          role: updated.role,
+          email: updated.email,
+          id: updated.id,
+        };
+      });
+    });
+    return () => {
+      unsubscribe && unsubscribe();
+    };
+  }, [user?.id]);
 
   const handleLogin = (loggedInUser: User) => {
     setUser(loggedInUser);
