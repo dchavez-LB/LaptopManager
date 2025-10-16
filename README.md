@@ -1,6 +1,6 @@
-# 📱 Laptop Manager - Colegio Byron
+# 📱 Laptop Manager - Colegio Lord Byron
 
-Sistema de gestión de préstamos de laptops para el Colegio Byron, desarrollado con React Native y Expo.
+Sistema de gestión de préstamos de laptops para el Colegio Lord Byron, desarrollado con React Native y Expo.
 
 ## 🚀 Características
 
