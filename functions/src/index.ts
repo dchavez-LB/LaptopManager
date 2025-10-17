@@ -10,9 +10,14 @@ const SUPPORT_TEAM_EMAILS: string[] = [
   'phuamani@byron.edu.pe'
 ];
 
-function determineRole(email: string): 'support' | 'teacher' {
+const ADMIN_EMAILS: string[] = [
+  'lmadmin@byron.edu.pe'
+];
+
+function determineRole(email: string): 'support' | 'teacher' | 'admin' {
   const lower = email.toLowerCase();
   if (SUPPORT_TEAM_EMAILS.includes(lower)) return 'support';
+  if (ADMIN_EMAILS.includes(lower)) return 'admin';
   // Por dominio institucional, profesor
   if (lower.endsWith('@byron.edu.pe')) return 'teacher';
   // Por defecto, profesor
@@ -40,8 +45,8 @@ export const onUserCreate = functions.auth.user().onCreate(async (user) => {
 // Sincronización manual de todos los usuarios de Auth hacia Firestore (llamable)
 export const syncAuthUsers = functions.https.onCall(async (data, context) => {
   const callerEmail = context.auth?.token?.email?.toLowerCase() || '';
-  if (!callerEmail || !SUPPORT_TEAM_EMAILS.includes(callerEmail)) {
-    throw new functions.https.HttpsError('permission-denied', 'Solo soporte puede ejecutar sincronización.');
+  if (!callerEmail || (!SUPPORT_TEAM_EMAILS.includes(callerEmail) && !ADMIN_EMAILS.includes(callerEmail))) {
+    throw new functions.https.HttpsError('permission-denied', 'Solo soporte o administrador puede ejecutar sincronización.');
   }
 
   let nextPageToken: string | undefined;
@@ -68,6 +73,34 @@ export const syncAuthUsers = functions.https.onCall(async (data, context) => {
   } while (nextPageToken);
 
   return { synced: count };
+});
+
+// Actualización por administrador: nombre y/o contraseña
+export const adminUpdateUser = functions.https.onCall(async (data: { uid: string; name?: string; password?: string }, context) => {
+  const callerEmail = context.auth?.token?.email?.toLowerCase() || '';
+  if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) {
+    throw new functions.https.HttpsError('permission-denied', 'Solo el administrador puede modificar usuarios.');
+  }
+  const { uid, name, password } = (data || {}) as any;
+  if (!uid || typeof uid !== 'string') {
+    throw new functions.https.HttpsError('invalid-argument', 'Se requiere el UID del usuario.');
+  }
+  try {
+    if (name && typeof name === 'string') {
+      await admin.auth().updateUser(uid, { displayName: name });
+      await db.collection('users').doc(uid).set({ name }, { merge: true });
+    }
+    if (password && typeof password === 'string') {
+      if (password.length < 6) {
+        throw new functions.https.HttpsError('invalid-argument', 'La contraseña debe tener al menos 6 caracteres.');
+      }
+      await admin.auth().updateUser(uid, { password });
+    }
+    return { ok: true };
+  } catch (err: any) {
+    const code = (err?.code || 'unknown') as string;
+    throw new functions.https.HttpsError('internal', `No se pudo actualizar el usuario: ${String(code)}`);
+  }
 });
 
 // Actualiza Firestore cuando se borra un usuario en Auth

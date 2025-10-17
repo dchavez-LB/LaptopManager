@@ -29,16 +29,25 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.email == email;
     }
 
+    // Función para verificar si el usuario es administrador (lmadmin)
+    function isAdminUser() {
+      return request.auth != null &&
+             request.auth.token.email != null &&
+             request.auth.token.email == 'lmadmin@byron.edu.pe';
+    }
+
     // ==================== USUARIOS ====================
     match /users/{userId} {
+      // Administrador puede leer y escribir todos los usuarios
+      allow read, write: if isAdminUser();
+
+      // El soporte técnico puede leer todos los usuarios
+      allow read: if isSupportUser();
+
       // Los usuarios pueden leer y escribir su propia información
       allow read, write: if request.auth != null && 
                             request.auth.uid == userId &&
-                            // Permitir también a soporte (incluye usuario de prueba)
                             (isByronUser() || isSupportUser());
-      
-      // El soporte técnico puede leer todos los usuarios
-      allow read: if isSupportUser();
     }
 
     // ==================== LAPTOPS ====================

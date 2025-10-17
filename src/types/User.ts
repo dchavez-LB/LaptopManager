@@ -2,7 +2,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'support' | 'teacher';
+  role: 'support' | 'teacher' | 'admin';
   department?: string;
   photoURL?: string | null;
   photoBase64?: string | null;

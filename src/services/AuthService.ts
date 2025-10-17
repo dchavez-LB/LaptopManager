@@ -12,7 +12,8 @@ import {
   getRedirectResult,
   updatePassword,
   reauthenticateWithCredential,
-  EmailAuthProvider
+  EmailAuthProvider,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { 
   initializeFirestore,
@@ -58,6 +59,11 @@ const SUPPORT_TEAM_EMAILS = [
   'phuamani@byron.edu.pe'    // Pedro Huamaní
 ];
 
+// Añadir correos de administradores
+const ADMIN_EMAILS = [
+  'lmadmin@byron.edu.pe'
+];
+
 // Modo prueba temporal para permitir correos personales
 const ENABLE_TEST_MODE = false; // Modo prueba deshabilitado, solo cuentas institucionales
 const TEST_ALLOWED_EMAILS: string[] = [];
@@ -95,11 +101,16 @@ class AuthServiceClass {
   }
 
   // Determinar el rol del usuario basado en su email
-  private determineUserRole(email: string): 'support' | 'teacher' {
+  private determineUserRole(email: string): 'support' | 'teacher' | 'admin' {
+
     // Modo prueba deshabilitado
     // Primero verificar si está en la lista específica de soporte
     if (SUPPORT_TEAM_EMAILS.includes(email.toLowerCase())) {
       return 'support';
+    }
+    // Verificar si es administrador
+    if (ADMIN_EMAILS.includes(email.toLowerCase())) {
+      return 'admin';
     }
     
     // Verificar por dominio
@@ -130,7 +141,8 @@ class AuthServiceClass {
     ];
     
     return allAuthorizedDomains.includes(domain) || 
-           SUPPORT_TEAM_EMAILS.includes(email.toLowerCase());
+           SUPPORT_TEAM_EMAILS.includes(email.toLowerCase()) ||
+          ADMIN_EMAILS.includes(email.toLowerCase());
   }
 
   // Login con email y contraseña
@@ -378,6 +390,40 @@ class AuthServiceClass {
     }
   }
 
+  // Cambiar contraseña de otro usuario directamente, usando sesión secundaria (requiere contraseña actual)
+  async adminChangePasswordDirectByEmail(email: string, currentPassword: string, newPassword: string): Promise<void> {
+    try {
+      const callerEmail = this.auth.currentUser?.email?.toLowerCase() || '';
+      if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) {
+        throw new Error('auth/insufficient-permission');
+      }
+      // Inicializar/reusar app secundaria para no afectar la sesión del admin
+      let secondaryApp;
+      try {
+        secondaryApp = getApp('SecondaryAuth');
+      } catch (_) {
+        secondaryApp = initializeApp(firebaseConfig as any, 'SecondaryAuth');
+      }
+      const secondaryAuth = getAuth(secondaryApp);
+
+      // Iniciar sesión como el usuario objetivo con su contraseña actual
+      const credential = await this.withTimeout(signInWithEmailAndPassword(secondaryAuth, email, currentPassword), 10000);
+      const targetUser = credential.user;
+      if (!targetUser) {
+        throw new Error('auth/user-not-found');
+      }
+
+      // Actualizar su contraseña directamente
+      await this.withTimeout(updatePassword(targetUser, newPassword), 10000);
+
+      // Cerrar sesión secundaria
+      await signOut(secondaryAuth);
+    } catch (error: any) {
+      const code = error?.code || 'unknown';
+      throw new Error(this.getErrorMessage(String(code)));
+    }
+  }
+
   // Obtener todos los usuarios de soporte (para notificaciones)
   async getSupportUsers(): Promise<User[]> {
     try {
@@ -414,6 +460,55 @@ class AuthServiceClass {
     } catch (error) {
       console.error('Error calling syncAuthUsers function:', error);
       return 0;
+    }
+  }
+
+  // Actualizar usuario (nombre/contraseña) mediante Cloud Function, sólo admin
+  async adminUpdateUser(uid: string, updates: { name?: string; password?: string }): Promise<void> {
+    try {
+      const functions = getFunctions();
+      const callable = httpsCallable(functions, 'adminUpdateUser');
+      const payload: any = { uid };
+      if (typeof updates?.name === 'string') payload.name = updates.name;
+      if (typeof updates?.password === 'string') payload.password = updates.password;
+      const res: any = await callable(payload);
+      if (!res?.data?.ok) {
+        throw new Error('No se pudo actualizar el usuario.');
+      }
+    } catch (error: any) {
+      // Fallback para nombre: si la Cloud Function no está disponible o falla,
+      // y sólo estamos cambiando el nombre, escribir directamente en Firestore.
+      const onlyNameUpdate = typeof updates?.name === 'string' && !updates?.password;
+      const callerEmail = this.auth.currentUser?.email?.toLowerCase() || '';
+      if (onlyNameUpdate && callerEmail && ADMIN_EMAILS.includes(callerEmail)) {
+        try {
+          const userRef = doc(this.db, 'users', uid);
+          await setDoc(userRef, { name: updates!.name }, { merge: true });
+          return;
+        } catch (writeErr: any) {
+          // Si el fallback también falla, continuamos con el manejo de error estándar
+        }
+      }
+
+      // Fallback para contraseña: enviar email de restablecimiento si la función no está disponible
+      const onlyPasswordUpdate = typeof updates?.password === 'string' && !updates?.name;
+      if (onlyPasswordUpdate && callerEmail && ADMIN_EMAILS.includes(callerEmail)) {
+        try {
+          const userRef = doc(this.db, 'users', uid);
+          const snap = await getDoc(userRef);
+          const targetEmail = snap.exists() ? String(snap.data().email || '') : '';
+          if (targetEmail) {
+            await sendPasswordResetEmail(this.auth, targetEmail);
+            return;
+          }
+        } catch (resetErr: any) {
+          // Si el fallback de reset falla, se continua con el error estándar
+        }
+      }
+
+      const code = error?.code || 'unknown';
+      const msg = this.getErrorMessage(String(code));
+      throw new Error(msg || (error?.message || 'Error actualizando usuario'));
     }
   }
 

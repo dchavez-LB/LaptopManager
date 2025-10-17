@@ -503,7 +503,7 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
             <Text style={styles.userName}>{profileDetails.name}</Text>
             <Text style={styles.userEmail}>{user.email}</Text>
             <Text style={styles.userRole}>
-              {user.role === 'support' ? 'Soporte Técnico' : 'Profesor'}
+              {user.role === 'admin' ? 'Administrador' : user.role === 'support' ? 'Soporte Técnico' : 'Profesor'}
             </Text>
           </View>
         </View>
@@ -513,15 +513,6 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
         {/* Account Section */}
         <MenuSection title="Cuenta">
           <MenuItem
-            icon="person-outline"
-            title="Información Personal"
-            subtitle="Actualizar datos de perfil"
-            onPress={() => {
-              setEditProfileForm({ name: profileDetails.name, department: profileDetails.department });
-              setShowEditProfile(true);
-            }}
-          />
-          <MenuItem
             icon="image-outline"
             title="Foto de Perfil"
             subtitle={
@@ -530,12 +521,6 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
                 : 'Cambiar o eliminar tu foto de perfil'
             }
             onPress={openPhotoOptions}
-          />
-          <MenuItem
-            icon="lock-closed-outline"
-            title="Cambiar Contraseña"
-            subtitle="Actualizar contraseña de acceso"
-            onPress={() => setShowChangePassword(true)}
           />
         </MenuSection>
 
@@ -573,12 +558,14 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
             subtitle="Obtener ayuda sobre la aplicación"
             onPress={() => setShowHelp(true)}
           />
-          <MenuItem
-            icon="mail-outline"
-            title="Contactar Soporte"
-            subtitle="Enviar mensaje al equipo técnico"
-            onPress={handleContactSupport}
-          />
+          {user.role !== 'admin' && (
+            <MenuItem
+              icon="mail-outline"
+              title="Contactar Soporte"
+              subtitle="Enviar mensaje al equipo técnico"
+              onPress={handleContactSupport}
+            />
+          )}
           <MenuItem
             icon="document-text-outline"
             title="Términos y Condiciones"

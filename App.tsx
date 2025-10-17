@@ -10,6 +10,7 @@ import HistoryScreen from './src/screens/HistoryScreen';
 import RequestScreen from './src/screens/RequestScreen';
 import ScanScreen from './src/screens/ScanScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import AdminUsersScreen from './src/screens/AdminUsersScreen';
 import { colors } from './src/utils/colors';
 import { User } from './src/types/User';
 import { AuthService } from './src/services/AuthService';
@@ -125,6 +126,7 @@ export default function App() {
             if (route.name === 'Inicio') iconName = 'home-outline';
             else if (route.name === 'Historial') iconName = 'time-outline';
             else if (route.name === 'Solicitudes') iconName = 'document-text-outline';
+            else if (route.name === 'Usuarios') iconName = 'people-outline';
             else if (route.name === 'Escanear') iconName = 'scan-outline';
             else if (route.name === 'Perfil') iconName = 'person-circle-outline';
             return (
@@ -173,6 +175,25 @@ export default function App() {
               <SwipeableTabScreen
                 disableSwipeLeft
                 prev={<RequestScreen user={user} />}
+              >
+                <ProfileScreen user={user} onLogout={handleLogout} />
+              </SwipeableTabScreen>
+            )} />
+          </>
+        ) : (user.role === 'admin' && user.email?.toLowerCase() === 'lmadmin@byron.edu.pe') ? (
+          <>
+            <Tab.Screen name="Usuarios" children={() => (
+              <SwipeableTabScreen
+                disableSwipeRight
+                next={<ProfileScreen user={user} onLogout={handleLogout} />}
+              >
+                <AdminUsersScreen user={user} />
+              </SwipeableTabScreen>
+            )} />
+            <Tab.Screen name="Perfil" children={() => (
+              <SwipeableTabScreen
+                disableSwipeLeft
+                prev={<AdminUsersScreen user={user} />}
               >
                 <ProfileScreen user={user} onLogout={handleLogout} />
               </SwipeableTabScreen>

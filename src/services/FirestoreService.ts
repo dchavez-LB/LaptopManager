@@ -770,6 +770,51 @@ export class FirestoreService {
     }
   }
 
+  // Suscripción en tiempo real al listado completo de usuarios
+  static subscribeToUsers(
+    callback: (list: User[]) => void
+  ): () => void {
+    try {
+      const q = query(collection(db, this.USERS_COLLECTION), orderBy('name', 'asc'));
+      return onSnapshot(
+        q,
+        (snapshot) => {
+          const list = snapshot.docs.map((docSnap) => {
+            const data: any = docSnap.data();
+            const createdAtField = data?.createdAt;
+            const lastLoginField = data?.lastLogin;
+            const user: User = {
+              id: docSnap.id,
+              email: data?.email,
+              name: data?.name || (data?.email ? String(data.email).split('@')[0] : ''),
+              role: data?.role,
+              department: data?.department,
+              photoURL: data?.photoURL ?? null,
+              photoBase64: data?.photoBase64 ?? null,
+              photoMimeType: data?.photoMimeType ?? null,
+              createdAt:
+                createdAtField && typeof createdAtField.toDate === 'function'
+                  ? createdAtField.toDate()
+                  : new Date(),
+              lastLogin:
+                lastLoginField && typeof lastLoginField.toDate === 'function'
+                  ? lastLoginField.toDate()
+                  : new Date(),
+            };
+            return user;
+          });
+          callback(list);
+        },
+        (error) => {
+          console.error('Firestore listener error (users list):', error);
+        }
+      );
+    } catch (error) {
+      console.error('Error creating users list listener:', error);
+      return () => {};
+    }
+  }
+
   static async getTeachers(): Promise<{ id: string; name: string; email: string }[]> {
     try {
       // Intento principal: documentos con role === 'teacher'
@@ -851,6 +896,43 @@ export class FirestoreService {
       return list;
     } catch (error) {
       console.error('Error getting teachers:', error);
+      throw error;
+    }
+  }
+
+  static async getAllUsers(): Promise<User[]> {
+    try {
+      const usersRef = collection(db, this.USERS_COLLECTION);
+      // Intentar ordenar por name si existe, si no por createdAt
+      let qs = await getDocs(query(usersRef, orderBy('name', 'asc'))).catch(async () => {
+        return await getDocs(query(usersRef, orderBy('createdAt', 'desc')));
+      });
+      return qs.docs.map((docSnap) => {
+        const data: any = docSnap.data();
+        const createdAtField = data?.createdAt;
+        const lastLoginField = data?.lastLogin;
+        const user: User = {
+          id: docSnap.id,
+          email: data?.email,
+          name: data?.name || (data?.email ? String(data.email).split('@')[0] : ''),
+          role: data?.role,
+          department: data?.department,
+          photoURL: data?.photoURL ?? null,
+          photoBase64: data?.photoBase64 ?? null,
+          photoMimeType: data?.photoMimeType ?? null,
+          createdAt:
+            createdAtField && typeof createdAtField.toDate === 'function'
+              ? createdAtField.toDate()
+              : new Date(),
+          lastLogin:
+            lastLoginField && typeof lastLoginField.toDate === 'function'
+              ? lastLoginField.toDate()
+              : new Date(),
+        };
+        return user;
+      });
+    } catch (error) {
+      console.error('Error getting all users:', error);
       throw error;
     }
   }
