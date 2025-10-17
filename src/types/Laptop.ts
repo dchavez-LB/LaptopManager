@@ -26,6 +26,7 @@ export interface Laptop {
 export interface LoanRecord {
   id: string;
   laptopId: string;
+  laptopName?: string;
   laptop?: Laptop;
   borrowerId: string;
   borrower?: User;

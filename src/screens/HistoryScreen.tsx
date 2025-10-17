@@ -49,6 +49,12 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
   const [showSupportDetails, setShowSupportDetails] = useState(false);
   const [actionsRecordId, setActionsRecordId] = useState<string | null>(null);
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [clearConfirmStep, setClearConfirmStep] = useState<number>(1);
+  const [clearConfirmText, setClearConfirmText] = useState('');
   // Estado de grupos desplegables por salón
   const [expandedRooms, setExpandedRooms] = useState<Record<string, boolean>>({});
   const route = useRoute<any>();
@@ -114,8 +120,14 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
   // Los registros de devoluciones deben permanecer para historial.
   // Si en el futuro se requiere limpieza, se hará desde una acción manual.
 
-  // Suscripción al inventario para resolver nombres de laptops
+  // Suscripción al inventario para resolver nombres de laptops (solo soporte)
   useEffect(() => {
+    const isSupport = FirestoreService.isSupportEmail(user.email || '') || user.role === 'support';
+    if (!isSupport) {
+      // Evitar errores de permisos para profesores; mantener mapa vacío
+      setLaptopsById({});
+      return;
+    }
     const unsubscribe = FirestoreService.subscribeToLaptops((list) => {
       const map: Record<string, { name?: string; brand?: string; model?: string; barcode?: string; serialNumber?: string }> = {};
       list.forEach((l) => {
@@ -124,7 +136,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       setLaptopsById(map);
     });
     return () => { unsubscribe && unsubscribe(); };
-  }, []);
+  }, [user.email, user.role]);
 
   useEffect(() => {
     applyFilters();
@@ -133,6 +145,44 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
   useEffect(() => {
     applySupportFilters();
   }, [supportRequests, filters]);
+
+  // Resolver nombres de laptops puntualmente para profesores (sin suscripción global)
+  useEffect(() => {
+    if (user.role !== 'teacher') return;
+    try {
+      const ids = Array.from(new Set((loanRecords || []).map((r) => r.laptopId).filter((id) => !!id)));
+      const missing = ids.filter((id) => !laptopsById[id]);
+      if (missing.length === 0) return;
+      let cancelled = false;
+      (async () => {
+        try {
+          const results = await Promise.all(
+            missing.map((id) => FirestoreService.getLaptop(id).catch(() => null))
+          );
+          const additions: Record<string, { name?: string; brand?: string; model?: string; barcode?: string; serialNumber?: string }> = {};
+          results.forEach((l) => {
+            if (l && l.id) {
+              additions[l.id] = {
+                name: l.name,
+                brand: l.brand,
+                model: l.model,
+                barcode: (l as any)?.barcode,
+                serialNumber: (l as any)?.serialNumber,
+              };
+            }
+          });
+          if (!cancelled && Object.keys(additions).length > 0) {
+            setLaptopsById((prev) => ({ ...prev, ...additions }));
+          }
+        } catch (_) {
+          // Silenciar errores de resolución puntuales
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    } catch (_) {}
+  }, [user.role, loanRecords, laptopsById]);
 
   const loadLoanHistory = async () => {
     try {
@@ -201,7 +251,8 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       const searchNorm = normalizeName(filters.searchTerm);
       filtered = filtered.filter(record => {
         const info = laptopsById[record.laptopId] || {};
-        const nameMatch = normalizeName(info.name || '').includes(searchNorm);
+        const recordName = (record as any)?.laptopName || info.name || (looksLikeHumanName(record.laptopId) ? record.laptopId : '');
+        const nameMatch = normalizeName(recordName).includes(searchNorm);
         const brandMatch = normalizeName(info.brand || '').includes(searchNorm);
         const modelMatch = normalizeName(info.model || '').includes(searchNorm);
 
@@ -266,6 +317,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
             status: 'returned',
             returnDate: now,
             returnedById: user.id,
+            receivedByEmail: user.email,
             laptopId: record.laptopId,
           });
           // Resolver laptop y marcar disponible en inventario
@@ -423,10 +475,30 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     }
   };
 
+  const looksLikeHumanName = (s: string) => {
+    const x = String(s || '').trim();
+    if (!x) return false;
+    if (x.includes(' ')) return true; // nombres suelen tener espacios
+    const letters = x.replace(/[^A-Za-zÁÉÍÓÚáéíóú]/g, '');
+    const hasLetters = letters.length >= 3;
+    const hasVowel = /[AÁEÉIÍOÓUÚaáeéiíoóuú]/.test(x);
+    return hasLetters && hasVowel;
+  };
+
   const getLaptopDisplayName = (id: string) => {
     const info = laptopsById[id];
     const brandModel = `${info?.brand || ''} ${info?.model || ''}`.trim();
     return info?.name || brandModel || id;
+  };
+
+  const getRecordDisplayName = (record: LoanRecord) => {
+    const byRecord = (record as any)?.laptopName;
+    if (byRecord) return byRecord;
+    const byMap = getLaptopDisplayName(record.laptopId);
+    if (byMap && byMap !== record.laptopId) return byMap;
+    const id = String(record.laptopId || '');
+    if (looksLikeHumanName(id)) return id;
+    return id;
   };
 
   // Normalización simple de nombres para resolver coincidencias locales
@@ -492,6 +564,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
         status: 'returned',
         returnDate: Timestamp.now(),
         returnedById: user.id,
+        receivedByEmail: user.email,
         // Enviar laptopId para evitar lecturas adicionales en FirestoreService
         laptopId: record.laptopId,
       });
@@ -594,8 +667,68 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       setDeleteConfirmRecordId(null);
     }
   };
-
-  const renderLoanRecord = ({ item }: { item: LoanRecord }) => (
+  
+  const handleBackfillLaptopNames = async () => {
+    if (user.role !== 'support') return;
+    try {
+      setIsBackfilling(true);
+      let updated = 0;
+      for (const rec of loanRecords) {
+        const existing = String((rec as any)?.laptopName || '').trim();
+        const key = String(rec.laptopId || '').trim();
+        if (existing) continue;
+        let info: any = null;
+        try {
+          info = await FirestoreService.resolveLaptopByIdOrName(key);
+        } catch (_) {}
+        const brandModel = `${info?.brand || ''} ${info?.model || ''}`.trim();
+        const candidate = info?.name || brandModel || (looksLikeHumanName(key) ? key : '');
+        const name = String(candidate).trim();
+        if (String(name || '').trim()) {
+          try {
+            await FirestoreService.updateLoanRecord(rec.id, { laptopName: name });
+            updated++;
+          } catch (_) {}
+        }
+      }
+      setToastMessage(updated > 0 ? `Actualizados ${updated} nombre(s)` : 'No había nombres por actualizar');
+      setTimeout(() => setToastMessage(null), 2000);
+    } finally {
+      setIsBackfilling(false);
+    }
+  };
+  
+  const handleClearHistory = async () => {
+    if (user.role !== 'support') return;
+    try {
+      setIsClearing(true);
+      let deleted = 0;
+      for (const rec of loanRecords) {
+        try {
+          if (rec.status !== 'returned') {
+            try {
+              await FirestoreService.updateLaptop(rec.laptopId, {
+                status: 'available',
+                assignedTo: null,
+                currentUser: null,
+                lastReturnDate: Timestamp.now(),
+                location: 'Inventario',
+              });
+            } catch (_) {}
+          }
+          await FirestoreService.deleteLoanRecord(rec.id);
+          deleted++;
+        } catch (_) {}
+      }
+      setToastMessage(deleted > 0 ? `Eliminados ${deleted} registro(s)` : 'No había registros por eliminar');
+      setTimeout(() => setToastMessage(null), 2000);
+      setFilters((prev) => ({ ...prev, status: 'all' }));
+    } finally {
+      setIsClearing(false);
+    }
+  };
+  
+   const renderLoanRecord = ({ item }: { item: LoanRecord }) => (
     <TouchableOpacity
       style={[
         styles.recordCard,
@@ -613,7 +746,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     >
       <View style={styles.recordHeader}>
         <View style={styles.recordInfo}>
-          <Text style={styles.laptopId}>{getLaptopDisplayName(item.laptopId)}</Text>
+          <Text style={styles.laptopId}>{getRecordDisplayName(item)}</Text>
           {isClassroomLoan(item) ? (
             <Text style={styles.teacherEmail}>Aula: {(() => {
               const classroom = String(item.classroom || '').trim();
@@ -812,13 +945,36 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       >
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>Historial</Text>
-          <TouchableOpacity
-            style={styles.filterIcon}
-            onPress={() => setShowFilters(true)}
-          >
-            <Ionicons name="filter-outline" size={24} color={colors.surface} />
-          </TouchableOpacity>
+          {user.role === 'support' && (
+            <TouchableOpacity
+              style={styles.filterIcon}
+              onPress={() => setShowHeaderMenu((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel="Más opciones"
+            >
+              <Ionicons name="ellipsis-vertical" size={24} color={colors.surface} />
+            </TouchableOpacity>
+          )}
         </View>
+        {user.role === 'support' && showHeaderMenu && (
+           <View style={styles.headerMenu}>
+             <TouchableOpacity
+               style={styles.headerMenuItem}
+               onPress={() => {
+                 setShowHeaderMenu(false);
+                 setClearConfirmStep(1);
+                 setClearConfirmText('');
+                 setShowClearModal(true);
+               }}
+               disabled={isClearing}
+               accessibilityRole="button"
+               accessibilityLabel="Limpiar historial"
+             >
+               <Ionicons name={isClearing ? 'hourglass-outline' : 'trash-outline'} size={18} color="#C62828" />
+               <Text style={[styles.headerMenuItemText, { color: '#C62828' }]}>Limpiar historial</Text>
+             </TouchableOpacity>
+           </View>
+         )}
 
         {/* Tabs */}
         <View style={styles.tabsRow}>
@@ -856,6 +1012,8 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
               <Ionicons name="close-circle" size={20} color={colors.surface} />
             </TouchableOpacity>
           )}
+
+
         </View>
       </LinearGradient>
 
@@ -1001,7 +1159,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
                 <View style={styles.detailsContent}>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Laptop:</Text>
-                    <Text style={styles.detailValue}>{getLaptopDisplayName(selectedRecord.laptopId)}</Text>
+                    <Text style={styles.detailValue}>{getRecordDisplayName(selectedRecord)}</Text>
                   </View>
 
                   {isClassroomLoan(selectedRecord) ? (
@@ -1017,9 +1175,16 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
                   )}
 
                   <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Soporte:</Text>
+                    <Text style={styles.detailLabel}>Soporte (creó préstamo):</Text>
                     <Text style={styles.detailValue}>{selectedRecord.supportStaffEmail}</Text>
                   </View>
+
+                  {selectedRecord.status === 'returned' && selectedRecord.receivedByEmail && (
+                    <View style={styles.detailItem}>
+                      <Text style={styles.detailLabel}>Soporte (recibió devolución):</Text>
+                      <Text style={styles.detailValue}>{selectedRecord.receivedByEmail}</Text>
+                    </View>
+                  )}
 
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Destino:</Text>
@@ -1076,6 +1241,94 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
           <Text style={styles.toastText}>{toastMessage}</Text>
         </View>
       )}
+
+      {/* Confirm Clear History Modal */}
+      <Modal
+        visible={showClearModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowClearModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Limpiar historial</Text>
+              <TouchableOpacity onPress={() => setShowClearModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {clearConfirmStep === 1 ? (
+              <View>
+                <Text style={styles.dangerText}>
+                  Advertencia: esta acción eliminará TODOS los registros del historial en la base de datos
+                  y normalizará el estado de las laptops con préstamos activos.
+                </Text>
+                <View style={styles.confirmActionsRow}>
+                  <TouchableOpacity
+                    style={[styles.confirmButton, styles.confirmButtonSecondary]}
+                    onPress={() => setShowClearModal(false)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancelar limpieza"
+                  >
+                    <Text style={[styles.confirmButtonText, { color: colors.text }]}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.confirmButton, styles.confirmButtonPrimary]}
+                    onPress={() => setClearConfirmStep(2)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Continuar a segunda confirmación"
+                  >
+                    <Text style={styles.confirmButtonText}>Continuar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View>
+                <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+                  Para confirmar, escribe ELIMINAR en el campo de abajo.
+                </Text>
+                <TextInput
+                  style={styles.confirmInput}
+                  value={clearConfirmText}
+                  onChangeText={setClearConfirmText}
+                  placeholder="Escribe ELIMINAR"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="characters"
+                />
+                <View style={styles.confirmActionsRow}>
+                  <TouchableOpacity
+                    style={[styles.confirmButton, styles.confirmButtonSecondary]}
+                    onPress={() => {
+                      setShowClearModal(false);
+                      setClearConfirmStep(1);
+                      setClearConfirmText('');
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancelar limpieza"
+                  >
+                    <Text style={[styles.confirmButtonText, { color: colors.text }]}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.confirmButton, styles.confirmButtonDanger]}
+                    onPress={() => {
+                      setShowClearModal(false);
+                      setClearConfirmStep(1);
+                      setClearConfirmText('');
+                      handleClearHistory();
+                    }}
+                    disabled={clearConfirmText.trim().toUpperCase() !== 'ELIMINAR' || isClearing}
+                    accessibilityRole="button"
+                    accessibilityLabel="Eliminar todos los registros"
+                  >
+                    <Text style={styles.confirmButtonText}>{isClearing ? 'Eliminando...' : 'Eliminar'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Support Details Modal */}
       <Modal
@@ -1171,6 +1424,33 @@ const styles = StyleSheet.create({
   },
   filterIcon: {
     padding: 8,
+  },
+  headerMenu: {
+    position: 'absolute',
+    top: getAdaptiveTopPadding() + 44,
+    right: 20,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  headerMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  headerMenuItemText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: colors.text,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -1431,6 +1711,41 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 16,
     fontWeight: '700',
+  },
+  confirmActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 16,
+  },
+  confirmButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  confirmButtonText: {
+    color: colors.surface,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  confirmButtonPrimary: {
+    backgroundColor: colors.primary,
+  },
+  confirmButtonDanger: {
+    backgroundColor: '#C62828',
+  },
+  confirmButtonSecondary: {
+    backgroundColor: '#EEEEEE',
+  },
+  confirmInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    marginTop: 12,
   },
   // Estilos temporales para overlay y toast
   returnOverlay: {
