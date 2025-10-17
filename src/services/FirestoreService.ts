@@ -36,6 +36,12 @@ export class FirestoreService {
     'phuamani@byron.edu.pe'
   ];
 
+  // Utilidad: verificar si el email pertenece al equipo de soporte
+  static isSupportEmail(email: string | undefined | null): boolean {
+    const e = String(email || '').toLowerCase();
+    return this.SUPPORT_TEAM_EMAILS.includes(e);
+  }
+
   // Correos semilla para garantizar que al menos aparezcan profesores conocidos
   // Esto actúa sólo como último recurso si no hay datos en Firestore todavía
   private static TEACHER_SEED_EMAILS: string[] = [

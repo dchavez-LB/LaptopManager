@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,9 @@ import {
   Linking,
   Image,
   Platform,
+  Animated,
+  Dimensions,
+  Pressable,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,8 +63,73 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
     department: user.department || '',
   });
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showPhotoPreview, setShowPhotoPreview] = useState(false);
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
   const [showConfirmDeletePhoto, setShowConfirmDeletePhoto] = useState(false);
+
+  // Animación de expansión del avatar
+  const avatarRef = useRef<View | null>(null);
+  const [previewStart, setPreviewStart] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const previewX = useRef(new Animated.Value(0)).current;
+  const previewY = useRef(new Animated.Value(0)).current;
+  const previewSize = useRef(new Animated.Value(64)).current;
+  const previewRadius = useRef(new Animated.Value(32)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const { width: screenW, height: screenH } = Dimensions.get('window');
+  const TARGET_SIZE = Math.min(screenW, screenH) * 0.68;
+  const TARGET_X = (screenW - TARGET_SIZE) / 2;
+  const TARGET_Y = (screenH - TARGET_SIZE) / 2;
+
+  const openPreviewAnimated = () => {
+    if (!(user.photoURL || user.photoBase64)) return;
+    const run = (x: number, y: number, width: number, height: number) => {
+      setPreviewStart({ x, y, width, height });
+      previewX.setValue(x);
+      previewY.setValue(y);
+      previewSize.setValue(width);
+      previewRadius.setValue(width / 2);
+      backdropOpacity.setValue(0);
+      setShowPhotoPreview(true);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.timing(previewX, { toValue: TARGET_X, duration: 220, useNativeDriver: false }),
+        Animated.timing(previewY, { toValue: TARGET_Y, duration: 220, useNativeDriver: false }),
+        Animated.spring(previewSize, { toValue: TARGET_SIZE, bounciness: 6, speed: 12, useNativeDriver: false }),
+        Animated.timing(previewRadius, { toValue: TARGET_SIZE / 2, duration: 220, useNativeDriver: false }),
+      ]).start();
+    };
+    try {
+      // Medimos la posición del avatar en pantalla para animar desde ahí
+      // @ts-ignore
+      avatarRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => run(x, y, width, height));
+    } catch (e) {
+      // Fallback si falla la medición (p. ej., web)
+      setShowPhotoPreview(true);
+      previewX.setValue(TARGET_X);
+      previewY.setValue(TARGET_Y);
+      previewSize.setValue(64);
+      previewRadius.setValue(32);
+      backdropOpacity.setValue(0);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.spring(previewSize, { toValue: TARGET_SIZE, bounciness: 6, speed: 12, useNativeDriver: false }),
+        Animated.timing(previewRadius, { toValue: TARGET_SIZE / 2, duration: 220, useNativeDriver: false }),
+      ]).start();
+    }
+  };
+
+  const closePreviewAnimated = () => {
+    const start = previewStart;
+    Animated.parallel([
+      Animated.timing(backdropOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+      Animated.timing(previewX, { toValue: start ? start.x : TARGET_X, duration: 200, useNativeDriver: false }),
+      Animated.timing(previewY, { toValue: start ? start.y : TARGET_Y, duration: 200, useNativeDriver: false }),
+      Animated.spring(previewSize, { toValue: start ? start.width : 64, bounciness: 0, speed: 15, useNativeDriver: false }),
+      Animated.timing(previewRadius, { toValue: start ? start.width / 2 : 32, duration: 200, useNativeDriver: false }),
+    ]).start(() => {
+      setShowPhotoPreview(false);
+    });
+  };
 
   // Eliminado: detección de DocumentPicker; preferimos ImagePicker con base64
 
@@ -408,7 +476,13 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
         style={styles.header}
       >
         <View style={styles.profileInfo}>
-          <View style={styles.avatarContainer}>
+          <TouchableOpacity
+            // @ts-ignore
+            ref={avatarRef}
+            style={styles.avatarContainer}
+            activeOpacity={0.8}
+            onPress={openPreviewAnimated}
+          >
             {user.photoURL || user.photoBase64 ? (
               <Image
                 source={{
@@ -424,7 +498,7 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
               />
             )}
             {/* Botón de cámara ocultado explícitamente */}
-          </View>
+          </TouchableOpacity>
           <View style={styles.userInfo}>
             <Text style={styles.userName}>{profileDetails.name}</Text>
             <Text style={styles.userEmail}>{user.email}</Text>
@@ -734,6 +808,47 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
         </View>
       </Modal>
 
+      {/* Photo Preview Modal con animación de expansión y cierre al tocar fuera */}
+      <Modal
+        visible={showPhotoPreview}
+        animationType="none"
+        transparent={true}
+        onRequestClose={closePreviewAnimated}
+      >
+        <View style={styles.fullscreenOverlay}>
+          {/* Backdrop clickeable para cerrar */}
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={closePreviewAnimated}>
+            <Animated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)', opacity: backdropOpacity }]} />
+          </Pressable>
+          {/* Contenedor circular que se expande desde el avatar */}
+          <Animated.View
+            style={[
+              styles.previewCircle,
+              {
+                left: previewX,
+                top: previewY,
+                width: previewSize,
+                height: previewSize,
+                borderRadius: previewRadius,
+              },
+            ]}
+          >
+            {(user.photoURL || user.photoBase64) ? (
+              <Image
+                source={{
+                  uri: user.photoURL || `data:${user.photoMimeType || 'image/jpeg'};base64,${user.photoBase64}`
+                }}
+                style={styles.previewCircleImage}
+              />
+            ) : (
+              <View style={{ alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                <Ionicons name="person-circle-outline" size={64} color={colors.textSecondary} />
+              </View>
+            )}
+          </Animated.View>
+        </View>
+      </Modal>
+
       {/* Photo Options Modal */}
       <Modal
         visible={showPhotoOptions}
@@ -978,12 +1093,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  fullscreenOverlay: {
+    flex: 1,
+  },
   modalContent: {
     backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 24,
     width: '90%',
     maxWidth: 400,
+  },
+  previewContent: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    width: '96%',
+    maxWidth: 640,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1049,6 +1174,23 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  previewImage: {
+    width: '100%',
+    height: 420,
+    resizeMode: 'contain',
+    backgroundColor: colors.primary + '10',
+    borderRadius: 12,
+  },
+  previewCircle: {
+    position: 'absolute',
+    overflow: 'hidden',
+    elevation: 10,
+  },
+  previewCircleImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   aboutContent: {
     alignItems: 'center',

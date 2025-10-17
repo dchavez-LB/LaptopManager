@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,8 @@ import {
   Alert,
   Animated,
   Platform,
-  StatusBar
+  StatusBar,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,6 +35,8 @@ interface DashboardStats {
 }
 
 export default function HomeScreen({ user }: HomeScreenProps) {
+  // Determinar capacidades reales según email, alineado con reglas de Firestore
+  const isSupport = FirestoreService.isSupportEmail(user.email || '');
   const [stats, setStats] = useState<DashboardStats>({
     totalLaptops: 0,
     availableLaptops: 0,
@@ -51,28 +54,47 @@ export default function HomeScreen({ user }: HomeScreenProps) {
   // Recargar estadísticas cada vez que la pantalla gana foco
   useFocusEffect(
     React.useCallback(() => {
-      // Suscripción ligera en tiempo real a estadísticas de inventario (total, disponibles, prestadas)
-      const unsubscribeStats = FirestoreService.subscribeToLaptopStats(({ totalLaptops, availableLaptops, loanedLaptops }) => {
-        setStats((prev) => ({
-          ...prev,
-          totalLaptops,
-          availableLaptops,
-          activeLloans: loanedLaptops,
-        }));
-      });
-      // Suscripción a préstamos activos para reflejar decrementos inmediatos al devolver
-      const unsubscribeActiveLoans = FirestoreService.subscribeToLoanRecords((records) => {
-        try {
-          const active = records.filter(r => r.status === 'active');
-          const uniqueLaptopIds = new Set(active.map(r => r.laptopId).filter(Boolean));
+      // Suscripción ligera en tiempo real a estadísticas de inventario (solo para soporte)
+      let unsubscribeStats: (() => void) | undefined;
+      if (isSupport) {
+        unsubscribeStats = FirestoreService.subscribeToLaptopStats(({ totalLaptops, availableLaptops, loanedLaptops }) => {
           setStats((prev) => ({
             ...prev,
-            activeLloans: uniqueLaptopIds.size,
+            totalLaptops,
+            availableLaptops,
+            activeLloans: loanedLaptops,
           }));
-        } catch (e) {
-          // Silenciar errores menores de parseo
-        }
-      }, { status: 'active' });
+        });
+      }
+
+      // Suscripción a préstamos activos
+      // - soporte: todos los préstamos activos para contar inventario prestado
+      // - profesor: solo sus propios préstamos activos para contar "Mis Préstamos"
+      let unsubscribeActiveLoans: (() => void) | undefined;
+      if (isSupport) {
+        unsubscribeActiveLoans = FirestoreService.subscribeToLoanRecords((records) => {
+          try {
+            const active = records.filter(r => r.status === 'active');
+            const uniqueLaptopIds = new Set(active.map(r => r.laptopId).filter(Boolean));
+            setStats((prev) => ({
+              ...prev,
+              activeLloans: uniqueLaptopIds.size,
+            }));
+          } catch (e) {
+            // Silenciar errores menores de parseo
+          }
+        }, { status: 'active' });
+      } else {
+        unsubscribeActiveLoans = FirestoreService.subscribeToLoanRecords((records) => {
+          try {
+            const myActive = records.filter(r => r.status === 'active');
+            setStats((prev) => ({
+              ...prev,
+              myActiveLoans: myActive.length,
+            }));
+          } catch (_) {}
+        }, { status: 'active', teacherEmail: user.email });
+      }
       // Cargar otras estadísticas puntuales
       loadDashboardData();
       return () => {
@@ -84,20 +106,33 @@ export default function HomeScreen({ user }: HomeScreenProps) {
 
   const loadDashboardData = async () => {
     try {
-      // Cargar estadísticas reales de Firestore
-      const statsFromDb = await FirestoreService.getStatistics();
-      // Mantener los valores en tiempo real y actualizar el resto
-      setStats((prev) => ({
-        ...prev,
-        activeLloans: statsFromDb.loanedLaptops,
-        pendingRequests: statsFromDb.pendingRequests,
-        pendingSupportRequests: 0,
-        myActiveLoans: user.role === 'teacher' ? 0 : undefined,
-        myPendingRequests: user.role === 'teacher' ? 0 : undefined,
-      }));
+      // Cargar estadísticas reales de Firestore SOLO para soporte
+      if (isSupport) {
+        const statsFromDb = await FirestoreService.getStatistics();
+        setStats((prev) => ({
+          ...prev,
+          activeLloans: statsFromDb.loanedLaptops,
+          pendingRequests: statsFromDb.pendingRequests,
+          pendingSupportRequests: 0,
+        }));
+      } else {
+        // Para profesor, inicializar contadores propios; la suscripción actualizará myActiveLoans
+        setStats((prev) => ({
+          ...prev,
+          myActiveLoans: 0,
+          myPendingRequests: 0,
+        }));
+        // No realizar lecturas globales; salir temprano
+        return;
+      }
     } catch (error) {
-      console.error('Error loading dashboard data:', error);
-      Alert.alert('Error', 'No se pudieron cargar los datos del dashboard');
+      // Evitar ruido de errores para profesor; solo reportar en soporte
+      if (isSupport) {
+        console.error('Error loading dashboard data:', error);
+        Alert.alert('Error', 'No se pudieron cargar los datos del dashboard');
+      } else {
+        console.warn('Permisos limitados para profesor al cargar dashboard:', String(error));
+      }
     }
   };
 
@@ -221,18 +256,34 @@ export default function HomeScreen({ user }: HomeScreenProps) {
         <View style={styles.headerContent}>
           <View>
             <Text style={styles.greeting}>{getGreeting()}</Text>
-            <Text style={styles.userName}>{user.name}</Text>
+            <View style={styles.nameRow}>
+              <Text style={styles.userName}>{user.name}</Text>
+              <Ionicons
+                name={isSupport ? 'build' : 'school'}
+                size={18}
+                color={colors.surface}
+                style={styles.nameIcon}
+              />
+            </View>
             <Text style={styles.userRole}>
-              {user.role === 'support' ? 'Soporte Técnico' : 'Profesor'}
+              {isSupport ? 'Soporte Técnico' : 'Profesor'}
             </Text>
           </View>
-          <View style={styles.profileIcon}>
-            <Ionicons 
-              name={user.role === 'support' ? 'build' : 'school'} 
-              size={32} 
-              color={colors.surface} 
-            />
-          </View>
+          {(() => {
+            const avatarSource = user.photoURL
+              ? { uri: user.photoURL }
+              : (user.photoBase64 && user.photoMimeType
+                  ? { uri: `data:${user.photoMimeType};base64,${user.photoBase64}` }
+                  : undefined);
+            if (avatarSource) {
+              return <Image source={avatarSource} style={styles.avatar} />;
+            }
+            return (
+              <View style={styles.avatarPlaceholder}>
+                <Ionicons name="person" size={32} color={colors.surface} />
+              </View>
+            );
+          })()}
         </View>
       </LinearGradient>
 
@@ -240,7 +291,7 @@ export default function HomeScreen({ user }: HomeScreenProps) {
       <View style={styles.statsSection}>
         <Text style={styles.sectionTitle}>Resumen</Text>
         
-        {user.role === 'support' ? (
+        {isSupport ? (
           // Vista para soporte técnico
           <View style={styles.statsGrid}>
             <StatCard
@@ -251,7 +302,7 @@ export default function HomeScreen({ user }: HomeScreenProps) {
               raised
               animated
               onPress={() => {
-                if (user.role === 'support') {
+                if (isSupport) {
                   navigation.navigate('Inventario');
                 } else {
                   Alert.alert('Acceso restringido', 'Esta sección es solo para soporte técnico.');
@@ -306,7 +357,7 @@ export default function HomeScreen({ user }: HomeScreenProps) {
       <View style={styles.actionsSection}>
         <Text style={styles.sectionTitle}>Acciones Rápidas</Text>
         
-        {user.role === 'support' ? (
+        {isSupport ? (
           <View style={styles.actionsGrid}>
             <QuickActionButton
               title="Escanear Laptop"
@@ -399,7 +450,16 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: colors.surface,
+    marginTop: 0,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 4,
+  },
+  nameIcon: {
+    marginLeft: 8,
+    opacity: 0.9,
   },
   userRole: {
     fontSize: 14,
@@ -407,10 +467,18 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     marginTop: 2,
   },
-  profileIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+  avatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  avatarPlaceholder: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
