@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +23,7 @@ import { DailyStatsService } from '../services/DailyStatsService';
 import { colors } from '../utils/colors';
 import { getAdaptiveTopPadding } from '../utils/layout';
 import { useRoute, useFocusEffect } from '@react-navigation/native';
+
 
 interface HistoryScreenProps {
   user: User;
@@ -55,16 +57,29 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
   // Mapa id -> datos de laptop para mostrar nombre en historial
   const [laptopsById, setLaptopsById] = useState<Record<string, { name?: string; brand?: string; model?: string; barcode?: string; serialNumber?: string }>>({});
 
+  // Referencias para los ScrollView de filtros
+  const loansScrollRef = useRef<ScrollView>(null);
+  const supportScrollRef = useRef<ScrollView>(null);
+
   useEffect(() => {
     if (route.params?.initialTab) {
       setActiveTab(route.params.initialTab);
     }
   }, [route.params?.initialTab]);
   
-  // Al enfocar la pantalla, forzar filtro a "Todos"
+  // Al enfocar la pantalla, forzar filtro a "Todos" y limpiar búsqueda
   useFocusEffect(
     React.useCallback(() => {
-      setFilters((prev) => ({ ...prev, status: 'all' }));
+      setFilters((prev) => ({ ...prev, status: 'all', searchTerm: '' }));
+      return () => {};
+    }, [])
+  );
+
+  // Al enfocar la pantalla, resetear posición del scroll de filtros a inicio
+  useFocusEffect(
+    React.useCallback(() => {
+      loansScrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
+      supportScrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
       return () => {};
     }, [])
   );
@@ -73,6 +88,11 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
     dateRange: 'all',
     searchTerm: '',
   });
+
+  // Swipe gating to avoid tab change while interacting with filters/search
+  // Removed swipe gating definition
+  // const { disableSwipe, enableSwipe } = useSwipe();
+  // const swipeGateResponder = { /* removed */ } as const;
 
   useEffect(() => {
     setIsLoading(true);
@@ -178,13 +198,21 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       });
     }
     if (filters.searchTerm) {
-      const searchLower = filters.searchTerm.toLowerCase();
-      filtered = filtered.filter(record =>
-        ((record.laptopId || "").toLowerCase().includes(searchLower)) ||
-        ((record.teacherEmail || "").toLowerCase().includes(searchLower)) ||
-        ((record.destination || "").toLowerCase().includes(searchLower)) ||
-        ((record.notes || "").toLowerCase().includes(searchLower))
-      );
+      const searchNorm = normalizeName(filters.searchTerm);
+      filtered = filtered.filter(record => {
+        const info = laptopsById[record.laptopId] || {};
+        const nameMatch = normalizeName(info.name || '').includes(searchNorm);
+        const brandMatch = normalizeName(info.brand || '').includes(searchNorm);
+        const modelMatch = normalizeName(info.model || '').includes(searchNorm);
+
+        return (
+          normalizeName(record.laptopId || '').includes(searchNorm) ||
+          normalizeName(record.teacherEmail || '').includes(searchNorm) ||
+          normalizeName(record.destination || '').includes(searchNorm) ||
+          normalizeName(record.notes || '').includes(searchNorm) ||
+          nameMatch || brandMatch || modelMatch
+        );
+      });
     }
     filtered.sort((a, b) => {
       const da = (a as any)?.loanDate?.toDate ? (a as any).loanDate.toDate().getTime() : new Date((a as any)?.loanDate).getTime();
@@ -818,12 +846,28 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
             onChangeText={(text) => setFilters({ ...filters, searchTerm: text })}
             placeholderTextColor={colors.textSecondary}
           />
+          {filters.searchTerm?.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setFilters({ ...filters, searchTerm: '' })}
+              style={styles.clearSearchButton}
+              accessibilityRole="button"
+              accessibilityLabel="Borrar búsqueda"
+            >
+              <Ionicons name="close-circle" size={20} color={colors.surface} />
+            </TouchableOpacity>
+          )}
         </View>
       </LinearGradient>
 
       {/* Quick Filters */}
       {activeTab === 'loans' ? (
         <View style={styles.quickFilters}>
+          <ScrollView
+            ref={loansScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.quickFiltersInner}
+          >
           <FilterButton
             title="Todos"
             isActive={filters.status === 'all'}
@@ -840,13 +884,21 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
             onPress={() => setFilters({ ...filters, status: 'returned' })}
           />
           <FilterButton
-            title="Vencidos"
-            isActive={filters.status === 'overdue'}
-            onPress={() => setFilters({ ...filters, status: 'overdue' })}
-          />
-        </View>
+              title="Vencidos"
+              isActive={filters.status === 'overdue'}
+              onPress={() => setFilters({ ...filters, status: 'overdue' })}
+            />
+            <View style={{ width: 24 }} />
+         </ScrollView>
+          </View>
       ) : (
         <View style={styles.quickFilters}>
+          <ScrollView
+            ref={supportScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.quickFiltersInner}
+          >
           <FilterButton
             title="Todos"
             isActive={filters.status === 'all'}
@@ -868,11 +920,13 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
             onPress={() => setFilters({ ...filters, status: 'resolved' })}
           />
           <FilterButton
-            title="Cerrados"
-            isActive={filters.status === 'closed'}
-            onPress={() => setFilters({ ...filters, status: 'closed' })}
-          />
-        </View>
+              title="Cerrados"
+              isActive={filters.status === 'closed'}
+              onPress={() => setFilters({ ...filters, status: 'closed' })}
+            />
+            <View style={{ width: 24 }} />
+            </ScrollView>
+         </View>
       )}
 
       {/* Records List */}
@@ -1134,11 +1188,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.surface,
   },
+  clearSearchButton: {
+    paddingLeft: 8,
+  },
   quickFilters: {
     flexDirection: 'row',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 8,
     backgroundColor: colors.surface,
+  },
+  // Add inner content style to prevent child stretching in horizontal ScrollView
+  quickFiltersInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 20,
   },
   filterButton: {
     paddingHorizontal: 16,

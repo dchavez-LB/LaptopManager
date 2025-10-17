@@ -1,7 +1,7 @@
 import React from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { colors } from '../utils/colors';
-import { PanGestureHandler, State } from 'react-native-gesture-handler';
+// import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import { useNavigation, useNavigationState } from '@react-navigation/native';
 
 interface Props {
@@ -12,11 +12,10 @@ interface Props {
   disableSwipeRight?: boolean; // bloquear ir hacia la derecha (mostrar prev)
 }
 
-export default function SwipeableTabScreen({ children, prev, next, disableSwipeLeft, disableSwipeRight }: Props) {
+export default function SwipeableTabScreen({ children, disableSwipeLeft, disableSwipeRight }: Props) {
   const navigation = useNavigation();
   const routes = useNavigationState((s) => s.routes);
   const index = useNavigationState((s) => s.index);
-  const screenWidth = Dimensions.get('window').width;
 
   const onHandlerStateChange = (evt: any) => {
     const { state, translationX, velocityX } = evt.nativeEvent || {};
@@ -41,9 +40,7 @@ export default function SwipeableTabScreen({ children, prev, next, disableSwipeL
   };
 
   return (
-    <PanGestureHandler onHandlerStateChange={onHandlerStateChange} activeOffsetX={[-20, 20]}>
-      <View style={styles.container}>{children}</View>
-    </PanGestureHandler>
+    <View style={styles.container}>{children}</View>
   );
 }
 
