@@ -5,6 +5,8 @@ export interface User {
   role: 'support' | 'teacher';
   department?: string;
   photoURL?: string | null;
+  photoBase64?: string | null;
+  photoMimeType?: string | null;
   createdAt: Date;
   lastLogin: Date;
 }

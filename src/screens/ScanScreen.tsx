@@ -175,15 +175,9 @@ function ScanScreen(props: ScanScreenProps) {
     (async () => {
       try {
         let perm: any = null;
-        const { NativeModules } = require('react-native');
-        const hasExpoBarCodeScanner = !!NativeModules?.ExpoBarCodeScanner;
-        if (Platform.OS === 'android' && hasExpoBarCodeScanner) {
-          const bcs = require('expo-barcode-scanner');
-          perm = await bcs.BarCodeScanner.requestPermissionsAsync();
-        } else {
-          const cam = require('expo-camera');
-          perm = await cam.Camera.requestCameraPermissionsAsync();
-        }
+        // Solicitar permisos de cámara usando expo-camera en todas las plataformas
+        const cam = require('expo-camera');
+        perm = await cam.Camera.requestCameraPermissionsAsync();
         if (mounted) setHasPermission(perm?.status === 'granted');
       } catch (e) {
         if (mounted) setHasPermission(false);
@@ -950,29 +944,12 @@ const handleManualSubmit = () => {
           </View>
         ) : (
           (() => {
-            // En Android usamos BarCodeScanner si el módulo nativo existe; en otros casos usamos CameraView
+            // Usar CameraView de expo-camera para escanear códigos en nativo
             let CameraViewComp: any = null;
-            let BarCodeScannerComp: any = null;
             try { CameraViewComp = require('expo-camera').CameraView; } catch (_) { CameraViewComp = null; }
-            let hasExpoBarCodeScanner = false;
-            try {
-              const { NativeModules } = require('react-native');
-              hasExpoBarCodeScanner = !!NativeModules?.ExpoBarCodeScanner;
-            } catch (_) {
-              hasExpoBarCodeScanner = false;
-            }
-            if (Platform.OS === 'android' && hasExpoBarCodeScanner) {
-              try { BarCodeScannerComp = require('expo-barcode-scanner').BarCodeScanner; } catch (_) { BarCodeScannerComp = null; }
-            }
             return (
               <View style={styles.scannerContainer}>
-                {Platform.OS === 'android' && hasExpoBarCodeScanner && BarCodeScannerComp ? (
-                  <BarCodeScannerComp
-                    onBarCodeScanned={scanned ? undefined : ((event: any) => handleBarCodeScanned(event))}
-                    style={styles.scanner}
-                    type={BarCodeScannerComp.Constants?.Type?.back ?? undefined}
-                  />
-                ) : CameraViewComp ? (
+                {CameraViewComp ? (
                   <CameraViewComp
                     onBarcodeScanned={scanned ? undefined : ((event: any) => handleBarCodeScanned(event))}
                     style={styles.scanner}

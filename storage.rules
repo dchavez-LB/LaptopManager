@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Archivos de usuario: cada usuario puede leer/escribir solo su carpeta
+    match /users/{uid}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Denegar todo lo demás por defecto
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

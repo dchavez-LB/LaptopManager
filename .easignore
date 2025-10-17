@@ -1,0 +1,11 @@
+# Exclude native directories so EAS Build uses managed prebuild
+android/
+ios/
+
+# Common local build artifacts
+*.iml
+.idea/
+.gradle/
+build/
+
+# Keep node_modules included (EAS filters it automatically)

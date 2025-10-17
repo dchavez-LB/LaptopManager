@@ -13,7 +13,8 @@ import {
   onSnapshot,
   Timestamp,
   setDoc,
-  writeBatch
+  writeBatch,
+  deleteField
 } from 'firebase/firestore';
 import { db } from './AuthService';
 import { Laptop, LoanRecord, LoanRequest, SupportRequest } from '../types/Laptop';
@@ -691,11 +692,13 @@ export class FirestoreService {
   static async updateUserProfile(userId: string, updates: Partial<User>): Promise<void> {
     try {
       const userRef = doc(db, this.USERS_COLLECTION, userId);
-      const cleanUpdates = Object.fromEntries(
-        Object.entries(updates || {}).filter(([, v]) => v !== undefined && v !== null)
+      // Mapear null -> deleteField() para eliminar campos explícitamente
+      const entries = Object.entries(updates || {}).filter(([, v]) => v !== undefined);
+      const mapped = Object.fromEntries(
+        entries.map(([k, v]) => [k, v === null ? deleteField() : v])
       );
       // Usar setDoc con merge para crear el documento si no existe y actualizar si existe
-      await setDoc(userRef, { ...cleanUpdates, updatedAt: Timestamp.now() }, { merge: true });
+      await setDoc(userRef, { ...mapped, updatedAt: Timestamp.now() }, { merge: true });
     } catch (error) {
       console.error('Error updating user profile:', error);
       throw error;
@@ -722,6 +725,8 @@ export class FirestoreService {
             role: data?.role,
             department: data?.department,
             photoURL: data?.photoURL ?? null,
+            photoBase64: data?.photoBase64 ?? null,
+            photoMimeType: data?.photoMimeType ?? null,
             createdAt:
               createdAtField && typeof createdAtField.toDate === 'function'
                 ? createdAtField.toDate()

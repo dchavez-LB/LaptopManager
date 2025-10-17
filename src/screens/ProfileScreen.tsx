@@ -10,6 +10,8 @@ import {
   Modal,
   TextInput,
   Linking,
+  Image,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +20,7 @@ import { colors } from '../utils/colors';
 import { getAdaptiveTopPadding } from '../utils/layout';
 import { FirestoreService } from '../services/FirestoreService';
 import { AuthService } from '../services/AuthService';
+// Ahora usamos ImagePicker con base64 directamente; no dependemos de expo-file-system aquí
 
 interface ProfileScreenProps {
   user: User;
@@ -56,6 +59,11 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
     name: user.name,
     department: user.department || '',
   });
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showPhotoOptions, setShowPhotoOptions] = useState(false);
+  const [showConfirmDeletePhoto, setShowConfirmDeletePhoto] = useState(false);
+
+  // Eliminado: detección de DocumentPicker; preferimos ImagePicker con base64
 
   const handleLogout = () => {
     Alert.alert(
@@ -114,6 +122,156 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
   const updateSetting = (key: keyof AppSettings, value: boolean) => {
     setSettings(prev => ({ ...prev, [key]: value }));
     // Aquí se guardarían las configuraciones localmente o en la nube
+  };
+
+  const handlePickProfilePhoto = async () => {
+    try {
+      // Usamos exclusivamente ImagePicker con base64
+      let PickerModule: any = null;
+      if (Platform.OS === 'web') {
+        PickerModule = await import('expo-image-picker');
+      } else {
+        try {
+          PickerModule = await import('expo-image-picker');
+        } catch (e) {
+          Alert.alert(
+            'Módulo no disponible',
+            'Tu cliente nativo no incluye expo-image-picker. Reconstruye el dev client (npx expo run:android) o usa Expo Go.'
+          );
+          return;
+        }
+        // Pedir permisos en nativo
+        const { status } = await PickerModule.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permisos', 'Se requiere permiso para acceder a la galería.');
+          return;
+        }
+      }
+
+      // Abrir galería y pedir base64 directamente
+      const result = await PickerModule.launchImageLibraryAsync({
+        mediaTypes: PickerModule.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+      // En SDK 54, result.cancelled ya no existe; usar result.canceled
+      // @ts-ignore
+      if (result.canceled) return;
+      const asset = (result as any).assets?.[0];
+      if (!asset) return;
+      const picked: { uri?: string; mimeType?: string } = { uri: asset.uri, mimeType: asset.mimeType || 'image/jpeg' };
+
+      if (!picked?.uri) return;
+
+      setUploadingPhoto(true);
+      const mime = picked.mimeType || 'image/jpeg';
+      let base64: string = '';
+      try {
+        if (Platform.OS === 'web') {
+          const resp = await fetch(picked.uri!);
+          const blob = await resp.blob();
+          const dataUrl: string = await new Promise((resolve, reject) => {
+            try {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(String(reader.result || ''));
+              reader.onerror = (e) => reject(e);
+              reader.readAsDataURL(blob);
+            } catch (e) {
+              reject(e);
+            }
+          });
+          const parts = dataUrl.split(',');
+          base64 = parts.length > 1 ? parts[1] : '';
+          // Intentar deducir mime del dataURL si disponible
+          const header = parts[0] || '';
+          const match = header.match(/data:(.*?);base64/);
+          if (match && match[1]) {
+            if (!picked.mimeType) {
+              (picked as any).mimeType = match[1];
+            }
+          }
+        } else {
+          // En nativo, ImagePicker nos entrega base64 directamente
+          base64 = (asset as any).base64 || '';
+        }
+      } catch (readErr: any) {
+        throw new Error(`No se pudo leer la imagen seleccionada: ${readErr?.message || String(readErr)}`);
+      }
+
+      if (!base64) {
+        throw new Error('No se pudo obtener datos de la imagen seleccionada.');
+      }
+
+      // Aproximar tamaño en bytes (base64 4 chars ~ 3 bytes)
+      const approxBytes = Math.floor(base64.length * 0.75);
+      if (approxBytes > 900000) {
+        Alert.alert('Imagen muy grande', 'La imagen seleccionada es muy pesada (> 900 KB). Elige una más pequeña o usa la galería con edición (calidad menor).');
+        return;
+      }
+
+      await FirestoreService.updateUserProfile(user.id, {
+        photoBase64: base64,
+        photoMimeType: mime,
+        photoURL: null,
+      });
+      Alert.alert('Foto actualizada', 'Tu foto de perfil se cambió correctamente.');
+    } catch (error: any) {
+      console.error('Error cambiando foto de perfil:', error);
+      const msg = String(error?.message || error || '');
+      const code = (error && (error.code || error?.name)) || 'storage/unknown';
+      const serverResponse = error?.customData?.serverResponse || error?.serverResponse || '';
+      const status = error?.customData?.status || error?.status || '';
+      const advisory = '';
+      const details = [
+        `code: ${code}`,
+        status ? `status: ${status}` : null,
+        serverResponse ? `server: ${serverResponse}` : null,
+      ].filter(Boolean).join(' | ');
+      if (details) {
+        console.warn('Firebase Storage error details =>', details);
+      }
+      if (msg.includes('Cannot find native module') || msg.includes('ExponentImagePicker')) {
+        Alert.alert(
+          'Módulo no disponible',
+          'Tu cliente nativo no incluye expo-image-picker. Reconstruye el dev client (npx expo run:android) o usa Expo Go. En web, el cambio de foto funciona.'
+        );
+        return;
+      }
+      Alert.alert('Error', details ? `${details}\n${msg}${advisory}` : (msg || 'No se pudo actualizar la foto de perfil'));
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleRemoveProfilePhoto = async () => {
+    try {
+      setUploadingPhoto(true);
+      await FirestoreService.updateUserProfile(user.id, {
+        photoBase64: null,
+        photoMimeType: null,
+        photoURL: null,
+      });
+      Alert.alert('Foto eliminada', 'Se quitó tu foto de perfil.');
+    } catch (error: any) {
+      const msg = error?.message || String(error);
+      Alert.alert('Error', `No se pudo eliminar la foto de perfil.\n${msg}`);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const confirmRemoveProfilePhoto = () => {
+    setShowConfirmDeletePhoto(true);
+  };
+
+  const safeHandlePickProfilePhoto = () => {
+    handlePickProfilePhoto();
+  };
+
+  const openPhotoOptions = () => {
+    setShowPhotoOptions(true);
   };
 
   // Mover handlers al alcance del componente para acceder al estado correctamente
@@ -251,11 +409,21 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
       >
         <View style={styles.profileInfo}>
           <View style={styles.avatarContainer}>
-            <Ionicons 
-              name={user.role === 'support' ? 'build' : 'school'} 
-              size={40} 
-              color={colors.surface} 
-            />
+            {user.photoURL || user.photoBase64 ? (
+              <Image
+                source={{
+                  uri: user.photoURL || `data:${user.photoMimeType || 'image/jpeg'};base64,${user.photoBase64}`
+                }}
+                style={styles.avatarImage}
+              />
+            ) : (
+              <Ionicons
+                name={'person-circle-outline'}
+                size={64}
+                color={colors.surface}
+              />
+            )}
+            {/* Botón de cámara ocultado explícitamente */}
           </View>
           <View style={styles.userInfo}>
             <Text style={styles.userName}>{profileDetails.name}</Text>
@@ -278,6 +446,16 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
               setEditProfileForm({ name: profileDetails.name, department: profileDetails.department });
               setShowEditProfile(true);
             }}
+          />
+          <MenuItem
+            icon="image-outline"
+            title="Foto de Perfil"
+            subtitle={
+              uploadingPhoto
+                ? 'Subiendo foto...'
+                : 'Cambiar o eliminar tu foto de perfil'
+            }
+            onPress={openPhotoOptions}
           />
           <MenuItem
             icon="lock-closed-outline"
@@ -556,6 +734,80 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
         </View>
       </Modal>
 
+      {/* Photo Options Modal */}
+      <Modal
+        visible={showPhotoOptions}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowPhotoOptions(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Foto de Perfil</Text>
+              <TouchableOpacity onPress={() => setShowPhotoOptions(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.aboutText}>Gestiona tu foto de perfil. ¿Qué deseas hacer?</Text>
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.confirmButton]}
+                onPress={() => { setShowPhotoOptions(false); safeHandlePickProfilePhoto(); }}
+                disabled={uploadingPhoto}
+              >
+                <Text style={styles.confirmButtonText}>{uploadingPhoto ? 'Subiendo...' : 'Cambiar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.dangerButton]}
+                onPress={() => { setShowPhotoOptions(false); confirmRemoveProfilePhoto(); }}
+                disabled={uploadingPhoto}
+              >
+                <Text style={styles.dangerButtonText}>Eliminar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Confirm Delete Photo Modal */}
+      <Modal
+        visible={showConfirmDeletePhoto}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowConfirmDeletePhoto(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Eliminar foto de perfil</Text>
+              <TouchableOpacity onPress={() => setShowConfirmDeletePhoto(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.aboutText}>¿Deseas quitar tu foto y volver a la silueta?</Text>
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setShowConfirmDeletePhoto(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.dangerButton]}
+                onPress={() => { setShowConfirmDeletePhoto(false); handleRemoveProfilePhoto(); }}
+              >
+                <Text style={styles.dangerButtonText}>Eliminar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Terms & Conditions Modal */}
       <Modal
         visible={showTerms}
@@ -607,6 +859,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 20,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  avatarImage: {
+    width: 80,
+    height: 80,
+    resizeMode: 'cover',
+  },
+  editAvatarButton: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    backgroundColor: '#00000040',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
   userInfo: {
     flex: 1,
@@ -756,6 +1024,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginHorizontal: 8,
+    minWidth: 128,
   },
   cancelButton: {
     backgroundColor: '#F5F5F5',
@@ -769,6 +1038,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   confirmButtonText: {
+    color: colors.surface,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  dangerButton: {
+    backgroundColor: '#F44336',
+  },
+  dangerButtonText: {
     color: colors.surface,
     fontSize: 16,
     fontWeight: 'bold',
