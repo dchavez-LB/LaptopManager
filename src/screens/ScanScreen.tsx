@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -405,6 +405,9 @@ const handleManualSubmit = () => {
 
       // Registrar de forma optimista sin bloquear la UI
       FirestoreService.createLoanRecord({
+        laptopName: (
+          targetLaptop?.name || `${targetLaptop?.brand || ''} ${targetLaptop?.model || ''}`.trim() || (targetLaptop as any)?.barcode || (targetLaptop as any)?.serialNumber || laptopId
+        ),
         laptopId,
         borrowerId,
         loanedById: user.id,
@@ -569,6 +572,9 @@ const handleManualSubmit = () => {
           // Se puede añadir validación adicional si se requiere evitar duplicados en el futuro
           // Crear registro de préstamo por equipo (trazabilidad)
           await FirestoreService.createLoanRecord({
+            laptopName: (
+              laptop.name || `${laptop.brand || ''} ${laptop.model || ''}`.trim() || (laptop as any)?.barcode || (laptop as any)?.serialNumber || laptop.id
+            ),
             laptopId: laptop.id,
             borrowerId: user.id,
             loanedById: user.id,

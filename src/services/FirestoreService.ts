@@ -432,6 +432,22 @@ export class FirestoreService {
     }
   }
 
+  static async updateLoanRecord(recordId: string, updates: Partial<LoanRecord>): Promise<void> {
+    try {
+      const recordRef = doc(db, this.LOAN_RECORDS_COLLECTION, recordId);
+      const cleanUpdates = Object.fromEntries(
+        Object.entries(updates || {}).filter(([, v]) => v !== undefined)
+      );
+      await updateDoc(recordRef, {
+        ...cleanUpdates,
+        updatedAt: Timestamp.now()
+      });
+    } catch (error) {
+      console.error('Error updating loan record:', error);
+      throw error;
+    }
+  }
+
   static async returnLaptop(recordId: string, updates: Partial<LoanRecord>): Promise<void> {
     try {
       const recordRef = doc(db, this.LOAN_RECORDS_COLLECTION, recordId);

@@ -46,9 +46,11 @@ service cloud.firestore {
       // El soporte técnico puede hacer todo con las laptops
       allow read, write: if isSupportUser();
       
-      // Los profesores solo pueden leer las laptops disponibles
-      allow read: if isTeacher() && 
-                     resource.data.status == 'available';
+      // Los profesores pueden leer las laptops disponibles
+      allow read: if isTeacher() && resource.data.status == 'available';
+
+      // Además, los profesores pueden leer la laptop que están usando actualmente
+      allow read: if isTeacher() && resource.data.currentUser == request.auth.token.email;
 
       // Permitir que profesores actualicen estado a 'loaned' SOLO para préstamos de salón
       // Restringimos los campos y verificamos que la asignación sea a un salón

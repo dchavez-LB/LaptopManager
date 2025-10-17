@@ -555,13 +555,7 @@ export default function ProfileScreen({ user, onLogout }: ProfileScreenProps) {
             value={settings.darkMode}
             onValueChange={(value) => updateSetting('darkMode', value)}
           />
-          <SettingItem
-            icon="sync-outline"
-            title="Sincronización Automática"
-            subtitle="Actualizar datos automáticamente"
-            value={settings.autoSync}
-            onValueChange={(value) => updateSetting('autoSync', value)}
-          />
+
           <SettingItem
             icon="volume-high-outline"
             title="Sonidos"
