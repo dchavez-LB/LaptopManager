@@ -17,6 +17,7 @@ import { FirestoreService } from './src/services/FirestoreService';
 import LaptopCatalogScreen from './src/screens/LaptopCatalogScreen';
 import SwipeableTabScreen from './src/components/SwipeableTabScreen';
 import TabIcon from './src/components/TabIcon';
+import { NativeModulesProxy } from 'expo-modules-core';
 
 const Tab = createBottomTabNavigator();
 
@@ -41,6 +42,20 @@ export default function App() {
     return () => { isMounted = false; };
   }, []);
 
+  // Permitir captura/compartición de pantalla si el módulo está disponible
+  useEffect(() => {
+    (async () => {
+      try {
+        if ((NativeModulesProxy as any)?.ExpoScreenCapture) {
+          const ScreenCapture = await import('expo-screen-capture');
+          await ScreenCapture.allowScreenCaptureAsync();
+        }
+      } catch {
+        // si el módulo no está enlazado en el dev client, ignora
+      }
+    })();
+  }, []);
+
   // Suscribirse a cambios del perfil del usuario para reflejar nombre y otros datos en la UI
   useEffect(() => {
     if (!user?.id) return;
@@ -54,6 +69,8 @@ export default function App() {
           name: updated.name,
           department: updated.department,
           photoURL: updated.photoURL,
+          photoBase64: updated.photoBase64,
+          photoMimeType: updated.photoMimeType,
           lastLogin: updated.lastLogin,
           createdAt: updated.createdAt,
           role: updated.role,

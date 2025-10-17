@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
@@ -35,7 +35,7 @@ import { User } from '../types/User';
    apiKey: "AIzaSyCDe5tLvRRI4l76gTVxJZEHFh_Jegp05xI",
    authDomain: "laptopmanager-49103.firebaseapp.com",
    projectId: "laptopmanager-49103",
-   storageBucket: "laptopmanager-49103.firebasestorage.app",
+   storageBucket: "laptopmanager-49103.appspot.com",
    messagingSenderId: "629013718975",
    appId: "1:629013718975:web:ebcb46cf41de130a77a30a",
    measurementId: "G-PZ8D8B1597"
@@ -79,7 +79,8 @@ class AuthServiceClass {
   }
 
   constructor() {
-    this.app = initializeApp(firebaseConfig);
+    // Evitar 'app/duplicate-app' en recargas del dev client
+    this.app = getApps().length ? getApp() : initializeApp(firebaseConfig);
     this.auth = getAuth(this.app);
     // Forzar fallback de transporte para redes que bloquean WebChannel
     this.db = initializeFirestore(this.app, {
@@ -326,6 +327,8 @@ class AuthServiceClass {
                   role: data.role,
                   department: data.department,
                   photoURL: data.photoURL,
+                  photoBase64: data.photoBase64 ?? null,
+                  photoMimeType: data.photoMimeType ?? null,
                   createdAt: createdAtField && typeof createdAtField.toDate === 'function' ? createdAtField.toDate() : new Date(),
                   lastLogin: lastLoginField && typeof lastLoginField.toDate === 'function' ? lastLoginField.toDate() : new Date()
                 });
