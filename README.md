@@ -230,9 +230,9 @@ npx eas submit --platform ios
 ## 📞 Soporte
 
 Para soporte técnico, contactar a:
-- **Daniel Chávez**: dchavez@byron.edu.pe
+- **Dante Chávez**: dchavez@byron.edu.pe
 - **Luis Ricra**: lricra@byron.edu.pe  
-- **Pedro Huamaní**: phuamani@byron.edu.pe
+- **Paul Huamaní**: phuamani@byron.edu.pe
 
 **Desarrollado con ❤️ para el Colegio Lord Byron**
 ## ☁️ Cloud Functions (Sincronización de profesores)
