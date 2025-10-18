@@ -102,7 +102,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
 
   useEffect(() => {
     setIsLoading(true);
-    const unsubscribe = FirestoreService.subscribeToLoanRecords(
+    const unsubscribeLoans = FirestoreService.subscribeToLoanRecords(
       (list) => {
         const userRecords = user.role === 'support'
           ? list
@@ -112,9 +112,32 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       },
       user.role === 'teacher' ? { teacherEmail: user.email } : undefined
     );
-    loadSupportHistory();
-    return () => { unsubscribe && unsubscribe(); };
+
+    // Subscribe to support requests for live updates
+    const unsubscribeSupport = FirestoreService.subscribeToSupportRequests(
+      (list) => {
+        const visible = user.role === 'support'
+          ? list
+          : list.filter(req => ((req.teacherEmail || '').toLowerCase() === user.email.toLowerCase()) || ((req.requesterId || '').toLowerCase() === user.email.toLowerCase()));
+        setSupportRequests(visible);
+        setIsLoading(false);
+      },
+      user.role === 'teacher' ? { teacherEmail: user.email } : undefined
+    );
+
+    return () => { unsubscribeLoans && unsubscribeLoans(); unsubscribeSupport && unsubscribeSupport(); };
   }, [user.role, user.email]);
+
+  // Activar marcado automático de préstamos vencidos (solo soporte)
+  useEffect(() => {
+    const isSupport = FirestoreService.isSupportEmail(user.email || '') || user.role === 'support';
+    if (!isSupport) return;
+    (async () => {
+      try {
+        await FirestoreService.markOverdueLoansForToday();
+      } catch (_) {}
+    })();
+  }, [user.email, user.role]);
 
   // Eliminado: no purgar automáticamente registros 'Devueltos'.
   // Los registros de devoluciones deben permanecer para historial.
@@ -667,6 +690,96 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       setDeleteConfirmRecordId(null);
     }
   };
+
+  // Accept a support request (support role)
+  const handleAcceptSupport = async (req: SupportRequest) => {
+    if (user.role !== 'support') return;
+    try {
+      await FirestoreService.updateSupportRequest(req.id, {
+        status: 'in_progress',
+        assignedSupportId: user.id,
+      } as any);
+      setToastMessage('Solicitud aceptada');
+      setTimeout(() => setToastMessage(null), 2000);
+    } catch (error) {
+      console.error('Error accepting support request:', error);
+      if (Platform.OS === 'web') {
+        setToastMessage('Error: no se pudo aceptar');
+        setTimeout(() => setToastMessage(null), 2500);
+      } else {
+        Alert.alert('Error', 'No se pudo aceptar la solicitud.');
+      }
+    } finally {
+      setShowSupportDetails(false);
+    }
+  };
+
+  // Resolve (culminar) a support request (support role)
+  const handleResolveSupport = async (req: SupportRequest) => {
+    if (user.role !== 'support') return;
+    try {
+      await FirestoreService.updateSupportRequest(req.id, {
+        status: 'resolved',
+        assignedSupportId: req.assignedSupportId || user.id,
+        resolution: req.resolution || `Atendido por ${user.email}`,
+      } as any);
+      setToastMessage('Asistencia marcada como resuelta');
+      setTimeout(() => setToastMessage(null), 2000);
+    } catch (error) {
+      console.error('Error resolving support request:', error);
+      if (Platform.OS === 'web') {
+        setToastMessage('Error: no se pudo marcar como resuelta');
+        setTimeout(() => setToastMessage(null), 2500);
+      } else {
+        Alert.alert('Error', 'No se pudo marcar la solicitud como resuelta.');
+      }
+    } finally {
+      setShowSupportDetails(false);
+    }
+  };
+
+  // Close a support request (support role)
+  const handleCloseSupport = async (req: SupportRequest) => {
+    if (user.role !== 'support') return;
+    try {
+      await FirestoreService.updateSupportRequest(req.id, {
+        status: 'closed',
+        assignedSupportId: req.assignedSupportId || user.id,
+      } as any);
+      setToastMessage('Solicitud cerrada');
+      setTimeout(() => setToastMessage(null), 2000);
+    } catch (error) {
+      console.error('Error closing support request:', error);
+      if (Platform.OS === 'web') {
+        setToastMessage('Error: no se pudo cerrar');
+        setTimeout(() => setToastMessage(null), 2500);
+      } else {
+        Alert.alert('Error', 'No se pudo cerrar la solicitud.');
+      }
+    } finally {
+      setShowSupportDetails(false);
+    }
+  };
+
+  // Delete a support request (support role)
+  const handleDeleteSupport = async (req: SupportRequest) => {
+    if (user.role !== 'support') return;
+    try {
+      await FirestoreService.deleteSupportRequest(req.id);
+      setToastMessage('Solicitud eliminada');
+      setTimeout(() => setToastMessage(null), 2000);
+    } catch (error) {
+      console.error('Error deleting support request:', error);
+      if (Platform.OS === 'web') {
+        setToastMessage('Error: no se pudo eliminar');
+        setTimeout(() => setToastMessage(null), 2500);
+      } else {
+        Alert.alert('Error', 'No se pudo eliminar la solicitud.');
+      }
+    } finally {
+      setShowSupportDetails(false);
+    }
+  };
   
   const handleBackfillLaptopNames = async () => {
     if (user.role !== 'support') return;
@@ -831,7 +944,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
       <View style={styles.recordHeader}>
         <View style={styles.recordInfo}>
           <Text style={styles.laptopId}>{item.classroom}</Text>
-          <Text style={styles.teacherEmail}>{user.email}</Text>
+          <Text style={styles.teacherEmail}>{item.teacherEmail || item.requesterId || '—'}</Text>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
           <Text style={styles.statusText}>{item.status === 'resolved' ? 'Resuelto' : item.status === 'in_progress' ? 'En progreso' : item.status === 'closed' ? 'Cerrado' : 'Pendiente'}</Text>
@@ -1121,7 +1234,7 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
           style={styles.recordsList}
           contentContainerStyle={styles.recordsContent}
           refreshControl={
-            <RefreshControl refreshing={isRefreshing} onRefresh={async () => { setIsRefreshing(true); await loadSupportHistory(); setIsRefreshing(false); }} />
+            <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -1371,24 +1484,76 @@ export default function HistoryScreen({ user }: HistoryScreenProps) {
                     <Text style={styles.detailValue}>{formatDate(((selectedSupport.createdAt as any)?.toDate ? (selectedSupport.createdAt as any).toDate() : new Date(selectedSupport.createdAt as any)) as Date)}</Text>
                   </View>
 
-                  <View style={styles.detailItem}>
+                  <View style={styles.detailItem}
+>
                     <Text style={styles.detailLabel}>Estado:</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedSupport.status) }]}>
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedSupport.status) }]}
+>
                       <Text style={styles.statusText}>{selectedSupport.status === 'resolved' ? 'Resuelto' : selectedSupport.status === 'in_progress' ? 'En progreso' : selectedSupport.status === 'closed' ? 'Cerrado' : 'Pendiente'}</Text>
                     </View>
                   </View>
 
+                  {selectedSupport.teacherEmail && (
+                    <View style={styles.detailItem}
+>
+                      <Text style={styles.detailLabel}>Profesor:</Text>
+                      <Text style={styles.detailValue}>{selectedSupport.teacherEmail}</Text>
+                    </View>
+                  )}
+
+                  {selectedSupport.contactPhone && (
+                    <View style={styles.detailItem}
+>
+                      <Text style={styles.detailLabel}>Teléfono:</Text>
+                      <Text style={styles.detailValue}>{selectedSupport.contactPhone}</Text>
+                    </View>
+                  )}
+
                   {selectedSupport.description && (
-                    <View style={styles.detailItem}>
+                    <View style={styles.detailItem}
+>
                       <Text style={styles.detailLabel}>Descripción:</Text>
                       <Text style={styles.detailValue}>{selectedSupport.description}</Text>
                     </View>
                   )}
 
                   {selectedSupport.resolution && (
-                    <View style={styles.detailItem}>
+                    <View style={styles.detailItem}
+>
                       <Text style={styles.detailLabel}>Resolución:</Text>
                       <Text style={styles.detailValue}>{selectedSupport.resolution}</Text>
+                    </View>
+                  )}
+
+                  {user.role === 'support' && (
+                    <View style={styles.actionsRow}
+>
+                      {selectedSupport.status === 'pending' && (
+                        <TouchableOpacity style={[styles.actionButton, styles.actionButtonReturn]} onPress={() => handleAcceptSupport(selectedSupport)}>
+                          <Ionicons name="checkmark-circle-outline" size={16} color={colors.surface} />
+                          <Text style={styles.actionButtonText}>Aceptar</Text>
+                        </TouchableOpacity>
+                      )}
+                      {selectedSupport.status === 'in_progress' && selectedSupport.assignedSupportId === user.id && (
+                        <TouchableOpacity style={[styles.actionButton, styles.actionButtonReturn]} onPress={() => handleResolveSupport(selectedSupport)}>
+                          <Ionicons name="checkmark-done-outline" size={16} color={colors.surface} />
+                          <Text style={styles.actionButtonText}>Culminar</Text>
+                        </TouchableOpacity>
+                      )}
+                      {selectedSupport.status === 'resolved' && selectedSupport.assignedSupportId === user.id && (
+                        <TouchableOpacity style={[styles.actionButton, styles.actionButtonReturn]} onPress={() => handleCloseSupport(selectedSupport)}>
+                          <Ionicons name="lock-closed-outline" size={16} color={colors.surface} />
+                          <Text style={styles.actionButtonText}>Cerrar</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity style={[styles.actionButton, styles.actionButtonDelete]} onPress={() => handleDeleteSupport(selectedSupport)}>
+                        <Ionicons name="trash-outline" size={16} color={colors.surface} />
+                        <Text style={styles.actionButtonText}>Eliminar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionButton, styles.actionButtonCancel]} onPress={() => setShowSupportDetails(false)}>
+                        <Ionicons name="close-outline" size={16} color={colors.surface} />
+                        <Text style={styles.actionButtonText}>Cancelar</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>

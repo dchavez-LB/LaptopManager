@@ -342,7 +342,8 @@ class AuthServiceClass {
                   photoBase64: data.photoBase64 ?? null,
                   photoMimeType: data.photoMimeType ?? null,
                   createdAt: createdAtField && typeof createdAtField.toDate === 'function' ? createdAtField.toDate() : new Date(),
-                  lastLogin: lastLoginField && typeof lastLoginField.toDate === 'function' ? lastLoginField.toDate() : new Date()
+                  lastLogin: lastLoginField && typeof lastLoginField.toDate === 'function' ? lastLoginField.toDate() : new Date(),
+                  mustChangePassword: Boolean((data as any)?.mustChangePassword),
                 });
               } else {
                 const user = await this.createOrUpdateUser(firebaseUser);
@@ -464,7 +465,7 @@ class AuthServiceClass {
   }
 
   // Actualizar usuario (nombre/contraseña) mediante Cloud Function, sólo admin
-  async adminUpdateUser(uid: string, updates: { name?: string; password?: string }): Promise<void> {
+  async adminUpdateUser(uid: string, updates: { name?: string; password?: string }): Promise<{ ok: boolean; via: 'function' | 'firestore' | 'reset-email' }> {
     try {
       const functions = getFunctions();
       const callable = httpsCallable(functions, 'adminUpdateUser');
@@ -475,22 +476,20 @@ class AuthServiceClass {
       if (!res?.data?.ok) {
         throw new Error('No se pudo actualizar el usuario.');
       }
+      return { ok: true, via: 'function' };
     } catch (error: any) {
-      // Fallback para nombre: si la Cloud Function no está disponible o falla,
-      // y sólo estamos cambiando el nombre, escribir directamente en Firestore.
       const onlyNameUpdate = typeof updates?.name === 'string' && !updates?.password;
       const callerEmail = this.auth.currentUser?.email?.toLowerCase() || '';
       if (onlyNameUpdate && callerEmail && ADMIN_EMAILS.includes(callerEmail)) {
         try {
           const userRef = doc(this.db, 'users', uid);
           await setDoc(userRef, { name: updates!.name }, { merge: true });
-          return;
+          return { ok: true, via: 'firestore' };
         } catch (writeErr: any) {
-          // Si el fallback también falla, continuamos con el manejo de error estándar
+          // continuar con manejo de error estándar
         }
       }
-
-      // Fallback para contraseña: enviar email de restablecimiento si la función no está disponible
+  
       const onlyPasswordUpdate = typeof updates?.password === 'string' && !updates?.name;
       if (onlyPasswordUpdate && callerEmail && ADMIN_EMAILS.includes(callerEmail)) {
         try {
@@ -499,16 +498,30 @@ class AuthServiceClass {
           const targetEmail = snap.exists() ? String(snap.data().email || '') : '';
           if (targetEmail) {
             await sendPasswordResetEmail(this.auth, targetEmail);
-            return;
+            return { ok: true, via: 'reset-email' };
           }
         } catch (resetErr: any) {
-          // Si el fallback de reset falla, se continua con el error estándar
+          // continuar con manejo de error estándar
         }
       }
-
+  
       const code = error?.code || 'unknown';
       const msg = this.getErrorMessage(String(code));
       throw new Error(msg || (error?.message || 'Error actualizando usuario'));
+    }
+  }
+
+  // Enviar enlace de restablecimiento de contraseña (sólo admin)
+  async adminSendPasswordResetEmail(email: string): Promise<void> {
+    try {
+      const callerEmail = this.auth.currentUser?.email?.toLowerCase() || '';
+      if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) {
+        throw new Error('auth/insufficient-permission');
+      }
+      await sendPasswordResetEmail(this.auth, email);
+    } catch (error: any) {
+      const code = error?.code || 'unknown';
+      throw new Error(this.getErrorMessage(String(code)));
     }
   }
 
@@ -545,5 +558,5 @@ class AuthServiceClass {
   }
 }
 
-export const AuthService = new AuthServiceClass();
-export const db = AuthService['db'];
+export const AuthService = new AuthServiceClass()
+export const db = AuthService['db']

@@ -20,6 +20,7 @@ import SwipeableTabScreen from './src/components/SwipeableTabScreen';
 import TabIcon from './src/components/TabIcon';
 import { NativeModulesProxy } from 'expo-modules-core';
 
+
 const Tab = createBottomTabNavigator();
 
 export default function App() {
@@ -62,9 +63,7 @@ export default function App() {
     if (!user?.id) return;
     const unsubscribe = FirestoreService.subscribeToUserProfile(user.id, (updated) => {
       setUser((prev) => {
-        // Si no había usuario previo, establece completamente
         if (!prev) return updated;
-        // Actualiza campos que pueden cambiar desde perfil
         return {
           ...prev,
           name: updated.name,
@@ -77,6 +76,7 @@ export default function App() {
           role: updated.role,
           email: updated.email,
           id: updated.id,
+          mustChangePassword: updated.mustChangePassword,
         };
       });
     });
@@ -111,6 +111,7 @@ export default function App() {
       </GestureHandlerRootView>
     );
   }
+
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

@@ -77,6 +77,7 @@ export interface SupportRequest {
   id: string;
   requesterId: string;
   requester?: User;
+  teacherEmail: string;
   classroom: string;
   location?: string;
   issueType: 'hardware' | 'software' | 'network' | 'other';
@@ -86,6 +87,7 @@ export interface SupportRequest {
   status: 'pending' | 'assigned' | 'in_progress' | 'resolved' | 'closed';
   assignedSupportId?: string;
   assignedSupport?: User;
+  contactPhone?: string;
   resolution?: string;
   type?: string;
   createdAt: Date;

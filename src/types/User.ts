@@ -9,6 +9,8 @@ export interface User {
   photoMimeType?: string | null;
   createdAt: Date;
   lastLogin: Date;
+  // Nuevo: obliga al usuario a cambiar su contraseña tras iniciar sesión
+  mustChangePassword?: boolean;
 }
 
 export interface LoginCredentials {

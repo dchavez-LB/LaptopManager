@@ -596,6 +596,43 @@ export class FirestoreService {
     }
   }
 
+  static async createSupportRequest(request: Omit<SupportRequest, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<string> {
+    try {
+      const clean = Object.fromEntries(Object.entries(request || {}).filter(([, v]) => v !== undefined));
+      const docRef = await addDoc(collection(db, this.SUPPORT_REQUESTS_COLLECTION), {
+        ...clean,
+        status: 'pending',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+      return docRef.id;
+    } catch (error) {
+      console.error('Error creating support request:', error);
+      throw error;
+    }
+  }
+
+  static async updateSupportRequest(requestId: string, updates: Partial<SupportRequest>): Promise<void> {
+    try {
+      const ref = doc(db, this.SUPPORT_REQUESTS_COLLECTION, requestId);
+      const cleanUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([, v]) => v !== undefined));
+      await updateDoc(ref, { ...cleanUpdates, updatedAt: Timestamp.now() });
+    } catch (error) {
+      console.error('Error updating support request:', error);
+      throw error;
+    }
+  }
+
+  static async deleteSupportRequest(requestId: string): Promise<void> {
+    try {
+      const ref = doc(db, this.SUPPORT_REQUESTS_COLLECTION, requestId);
+      await deleteDoc(ref);
+    } catch (error) {
+      console.error('Error deleting support request:', error);
+      throw error;
+    }
+  }
+
   static async getStatistics(): Promise<{ totalLaptops: number; availableLaptops: number; loanedLaptops: number; pendingRequests: number; todayLoans: number; }> {
     try {
       const totalLaptops = (await getDocs(collection(db, this.LAPTOPS_COLLECTION))).size;
@@ -662,7 +699,7 @@ export class FirestoreService {
   
   static subscribeToLoanRequests(
     callback: (requests: LoanRequest[]) => void,
-    filters?: { status?: string }
+    filters?: { status?: string; teacherEmail?: string }
   ): () => void {
     let q = query(
       collection(db, this.LOAN_REQUESTS_COLLECTION),
@@ -671,6 +708,9 @@ export class FirestoreService {
 
     if (filters?.status) {
       q = query(q, where('status', '==', filters.status));
+    }
+    if (filters?.teacherEmail) {
+      q = query(q, where('teacherEmail', '==', filters.teacherEmail));
     }
 
     return onSnapshot(q, (querySnapshot) => {
@@ -687,7 +727,7 @@ export class FirestoreService {
 
   static subscribeToSupportRequests(
     callback: (requests: SupportRequest[]) => void,
-    filters?: { status?: string }
+    filters?: { status?: string; teacherEmail?: string }
   ): () => void {
     let q = query(
       collection(db, this.SUPPORT_REQUESTS_COLLECTION),
@@ -696,6 +736,9 @@ export class FirestoreService {
 
     if (filters?.status) {
       q = query(q, where('status', '==', filters.status));
+    }
+    if (filters?.teacherEmail) {
+      q = query(q, where('teacherEmail', '==', filters.teacherEmail));
     }
 
     return onSnapshot(q, (querySnapshot) => {
@@ -757,6 +800,7 @@ export class FirestoreService {
               lastLoginField && typeof lastLoginField.toDate === 'function'
                 ? lastLoginField.toDate()
                 : new Date(),
+            mustChangePassword: Boolean(data?.mustChangePassword),
           };
           callback(user);
         },
@@ -800,6 +844,7 @@ export class FirestoreService {
                 lastLoginField && typeof lastLoginField.toDate === 'function'
                   ? lastLoginField.toDate()
                   : new Date(),
+              mustChangePassword: Boolean(data?.mustChangePassword),
             };
             return user;
           });
@@ -928,12 +973,70 @@ export class FirestoreService {
             lastLoginField && typeof lastLoginField.toDate === 'function'
               ? lastLoginField.toDate()
               : new Date(),
+          mustChangePassword: Boolean(data?.mustChangePassword),
         };
         return user;
       });
     } catch (error) {
       console.error('Error getting all users:', error);
       throw error;
+    }
+  }
+
+  static async markOverdueLoansForToday(cutoffHour: number = 17, cutoffMinute: number = 30): Promise<number> {
+    try {
+      const now = new Date();
+      const cutoff = new Date(now);
+      cutoff.setHours(cutoffHour, cutoffMinute, 0, 0);
+      // Si aún no es hora de corte, no hacer nada
+      if (now.getTime() < cutoff.getTime()) return 0;
+
+      // Obtener préstamos activos
+      const active = await this.getLoanRecords({ status: 'active' });
+      if (!active || active.length === 0) return 0;
+
+      const batch = writeBatch(db);
+      let updates = 0;
+      for (const rec of active) {
+        // Determinar fecha de referencia: loanDate o createdAt
+        let loanDate: Date | undefined;
+        const maybeLoan = (rec as any)?.loanDate;
+        if (maybeLoan?.toDate) {
+          loanDate = (maybeLoan as any).toDate();
+        } else if (maybeLoan) {
+          loanDate = new Date(maybeLoan as any);
+        }
+        const loanTime = loanDate?.getTime() ?? 0;
+
+        const createdAny = (rec as any)?.createdAt;
+        let created: Date | undefined;
+        if (createdAny?.toDate) {
+          created = createdAny.toDate();
+        } else if (createdAny) {
+          created = new Date(createdAny);
+        }
+        const createdTime = created?.getTime() ?? 0;
+
+        const referenceTime = loanTime || createdTime;
+        // Marcar como vencido si la referencia es anterior o igual al corte
+        if (referenceTime <= cutoff.getTime()) {
+          const ref = doc(db, this.LOAN_RECORDS_COLLECTION, rec.id);
+          batch.update(ref, {
+            status: 'overdue',
+            expectedReturnDate: Timestamp.fromDate(cutoff),
+            updatedAt: Timestamp.now(),
+          });
+          updates++;
+        }
+      }
+
+      if (updates > 0) {
+        await batch.commit();
+      }
+      return updates;
+    } catch (error) {
+      console.error('Error marking overdue loans:', error);
+      return 0;
     }
   }
 }

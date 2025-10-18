@@ -20,6 +20,8 @@ import { FirestoreService } from '../services/FirestoreService';
 import { colors } from '../utils/colors';
 import { getAdaptiveTopPadding } from '../utils/layout';
 import { useRoute } from '@react-navigation/native';
+import { secureGetItem, secureSetItem } from '../utils/secureStorage';
+import { NotificationService } from '../services/NotificationService';
 
 interface RequestScreenProps {
   user: User;
@@ -81,42 +83,32 @@ export default function RequestScreen({ user }: RequestScreenProps) {
 
   const loadMyRequests = async () => {
     try {
-      // Simular carga de solicitudes del usuario
-      const mockRequests: (LoanRequest | SupportRequest)[] = [
-        {
-          id: '1',
-          teacherEmail: user.email,
-          quantity: 5,
-          startDate: new Date('2024-01-20T08:00:00'),
-          endDate: new Date('2024-01-27T17:00:00'),
-          destination: 'Aula 301',
-          purpose: 'Clase de programación',
-          status: 'pending',
-          createdAt: new Date('2024-01-18T10:30:00'),
-          type: 'laptop_request',
-        } as LoanRequest,
-        {
-          id: '2',
-          requesterId: user.id || user.email,
-          teacherEmail: user.email,
-          classroom: 'Laboratorio de Ciencias',
-          location: 'Laboratorio de Ciencias',
-          issueType: 'hardware',
-          requestType: 'hardware',
-          priority: 'high',
-          description: 'Proyector no enciende, necesita revisión urgente',
-          contactPhone: '987654321',
-          status: 'in_progress',
-          assignedTo: 'dchavez@byron.edu.pe',
-          createdAt: new Date('2024-01-17T14:15:00'),
-          updatedAt: new Date('2024-01-17T14:15:00'),
-          type: 'support_request',
-        } as SupportRequest,
-      ];
+      const hiddenKey = `hidden_support_requests_${(user.email || '').toLowerCase()}`;
+      const hiddenRaw = await secureGetItem(hiddenKey);
+      const hiddenIds: string[] = hiddenRaw ? JSON.parse(hiddenRaw) : [];
 
-      setMyRequests(mockRequests);
+      // Cargar solicitudes reales de soporte del profesor
+      let supportList = await FirestoreService.getSupportRequests({ teacherEmail: user.email });
+      // Asegurar tipo para la UI
+      const normalized = (supportList || []).map((r) => ({ ...r, type: 'support_request' as any }));
+      // Filtrar ocultas
+      const visible = normalized.filter((r) => !hiddenIds.includes(r.id));
+      setMyRequests(visible);
     } catch (error) {
       console.error('Error loading requests:', error);
+    }
+  };
+
+  const hideSupportRequest = async (id: string) => {
+    try {
+      const hiddenKey = `hidden_support_requests_${(user.email || '').toLowerCase()}`;
+      const hiddenRaw = await secureGetItem(hiddenKey);
+      const hiddenIds: string[] = hiddenRaw ? JSON.parse(hiddenRaw) : [];
+      if (!hiddenIds.includes(id)) hiddenIds.push(id);
+      await secureSetItem(hiddenKey, JSON.stringify(hiddenIds));
+      setMyRequests((prev) => prev.filter((r) => r.id !== id));
+    } catch (error) {
+      console.error('Error hiding request:', error);
     }
   };
 
@@ -193,22 +185,27 @@ export default function RequestScreen({ user }: RequestScreenProps) {
     setIsLoading(true);
 
     try {
-      const newRequest: Omit<SupportRequest, 'id'> = {
+      const payload = {
         requesterId: user.id || user.email,
+        teacherEmail: user.email,
         classroom: supportForm.location,
         location: supportForm.location,
         issueType: supportForm.type as 'hardware' | 'software' | 'network' | 'other',
         requestType: supportForm.type,
         priority: supportForm.priority,
         description: supportForm.description,
-        status: 'pending',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        type: 'support_request',
+        contactPhone: supportForm.contactPhone,
+        type: 'support_request' as any,
       };
 
-      // Simular envío de solicitud
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const newId = await FirestoreService.createSupportRequest(payload as any);
+
+      try {
+        const teacherName = String(user.name || user.email || '').trim();
+        await NotificationService.notifySupportRequest(teacherName, supportForm.description, supportForm.priority);
+      } catch (_) {
+        // Silenciar errores de notificación para no interrumpir el flujo
+      }
 
       Alert.alert(
         'Solicitud Enviada',
@@ -217,7 +214,6 @@ export default function RequestScreen({ user }: RequestScreenProps) {
           {
             text: 'OK',
             onPress: () => {
-              // Resetear formulario
               setSupportForm({
                 type: 'hardware',
                 priority: 'medium',
@@ -238,12 +234,23 @@ export default function RequestScreen({ user }: RequestScreenProps) {
     }
   };
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('es-PE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
+  const formatDate = (input: any) => {
+    try {
+      if (!input) return '—';
+      const date: Date = (input?.toDate
+        ? input.toDate()
+        : input instanceof Date
+          ? input
+          : new Date(input)) as Date;
+      if (!(date instanceof Date) || !isFinite(date.getTime())) return '—';
+      return date.toLocaleDateString('es-PE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    } catch {
+      return '—';
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -291,8 +298,23 @@ export default function RequestScreen({ user }: RequestScreenProps) {
             {formatDate(item.createdAt)}
           </Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-          <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+            <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
+          </View>
+          {user.role === 'teacher' && item.type === 'support_request' && (
+            <TouchableOpacity
+              style={{ marginLeft: 8, padding: 4 }}
+              onPress={() =>
+                Alert.alert('Ocultar solicitud', '¿Quieres ocultar este registro de prueba? Podrás verlo en Historial.', [
+                  { text: 'Cancelar', style: 'cancel' },
+                  { text: 'Ocultar', style: 'destructive', onPress: () => hideSupportRequest(item.id) },
+                ])
+              }
+            >
+              <Ionicons name="trash-outline" size={20} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 

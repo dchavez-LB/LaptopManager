@@ -57,6 +57,12 @@ export default function HomeScreen({ user }: HomeScreenProps) {
       // Suscripción ligera en tiempo real a estadísticas de inventario (solo para soporte)
       let unsubscribeStats: (() => void) | undefined;
       if (isSupport) {
+        // Disparar marcado de vencidos al enfocar Home
+        (async () => {
+          try {
+            await FirestoreService.markOverdueLoansForToday();
+          } catch (_) {}
+        })();
         unsubscribeStats = FirestoreService.subscribeToLaptopStats(({ totalLaptops, availableLaptops, loanedLaptops }) => {
           setStats((prev) => ({
             ...prev,
@@ -95,11 +101,27 @@ export default function HomeScreen({ user }: HomeScreenProps) {
           } catch (_) {}
         }, { status: 'active', teacherEmail: user.email });
       }
+
+      // Suscripción a solicitudes del profesor para contar "Mis Solicitudes" abiertas
+      let unsubscribeMyRequests: (() => void) | undefined;
+      if (!isSupport) {
+        unsubscribeMyRequests = FirestoreService.subscribeToSupportRequests((requests) => {
+          try {
+            const open = requests.filter((r) => r.status !== 'resolved' && r.status !== 'closed');
+            setStats((prev) => ({
+              ...prev,
+              myPendingRequests: open.length,
+            }));
+          } catch (_) {}
+        }, { teacherEmail: user.email });
+      }
+
       // Cargar otras estadísticas puntuales
       loadDashboardData();
       return () => {
         unsubscribeStats && unsubscribeStats();
         unsubscribeActiveLoans && unsubscribeActiveLoans();
+        unsubscribeMyRequests && unsubscribeMyRequests();
       };
     }, [])
   );
@@ -372,7 +394,7 @@ export default function HomeScreen({ user }: HomeScreenProps) {
               onPress={() => navigation.navigate('Historial', { initialTab: 'support' })}
             />
             <QuickActionButton
-              title="Ver Préstamos"
+              title="Ver Historial"
               icon="document-text-outline"
               color="#FF9800"
               onPress={() => navigation.navigate('Historial', { initialTab: 'loans' })}
@@ -399,7 +421,7 @@ export default function HomeScreen({ user }: HomeScreenProps) {
               onPress={() => navigation.navigate('Solicitudes', { initialTab: 'support' })}
             />
             <QuickActionButton
-               title="Ver Préstamos"
+               title="Ver Historial"
                icon="document-text-outline"
                color="#FF9800"
                onPress={() => navigation.navigate('Historial', { initialTab: 'loans' })}

@@ -18,9 +18,7 @@ export default function AdminUsersScreen({ user }: AdminUsersScreenProps) {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<User | null>(null);
   const [nameEdit, setNameEdit] = useState('');
-  const [passwordEdit, setPasswordEdit] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', showCurrent: false, showNew: false, showConfirm: false });
   const [showEditName, setShowEditName] = useState(false);
-  const [showEditPassword, setShowEditPassword] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -54,7 +52,6 @@ export default function AdminUsersScreen({ user }: AdminUsersScreenProps) {
   const openUserActions = (u: User) => {
     setSelected(u);
     setNameEdit(u.name || '');
-    setPasswordEdit({ currentPassword: '', newPassword: '', confirmPassword: '', showCurrent: false, showNew: false, showConfirm: false });
     setShowEditName(true);
   };
 
@@ -78,38 +75,24 @@ export default function AdminUsersScreen({ user }: AdminUsersScreenProps) {
     }
   };
 
-  const submitPasswordChange = async () => {
+
+  const sendResetLinkToSelected = async () => {
     const u = selected;
-    if (!u) return;
-    const { currentPassword, newPassword, confirmPassword } = passwordEdit;
-    if (!newPassword || !confirmPassword) {
-      Alert.alert('Contraseña inválida', 'Completa los dos campos');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      Alert.alert('Error', 'Las contraseñas no coinciden');
-      return;
-    }
-    if (newPassword.length < 6) {
-      Alert.alert('Error', 'La contraseña debe tener al menos 6 caracteres');
+    if (!u || !u.email) {
+      Alert.alert('Error', 'Selecciona un usuario válido');
       return;
     }
     try {
       setLoading(true);
-      if ((currentPassword || '').trim().length > 0) {
-        await AuthService.adminChangePasswordDirectByEmail(String(u.email || ''), currentPassword, newPassword);
-        Alert.alert('Actualizado', 'Contraseña actualizada correctamente');
-      } else {
-        await AuthService.adminUpdateUser(u.id, { password: newPassword });
-        Alert.alert('Acción realizada', 'Se actualizó la contraseña o se envió un correo de restablecimiento.');
-      }
-      setShowEditPassword(false);
-     } catch (e: any) {
-       Alert.alert('Error', e?.message || 'No se pudo actualizar la contraseña');
-     } finally {
-       setLoading(false);
-     }
-   };
+      await AuthService.adminSendPasswordResetEmail(String(u.email));
+      Alert.alert('Enlace enviado', 'Se envió el enlace de restablecimiento al correo del usuario.');
+      setShowEditName(false);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'No se pudo enviar el enlace');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const renderItem = ({ item }: { item: User }) => (
     <TouchableOpacity style={styles.userItem} onPress={() => openUserActions(item)}>
@@ -141,7 +124,7 @@ export default function AdminUsersScreen({ user }: AdminUsersScreenProps) {
     <View style={styles.container}>
       <LinearGradient colors={[colors.primary, '#6A11CB']} style={styles.header}>
         <Text style={styles.headerTitle}>Administración de Usuarios</Text>
-        <Text style={styles.headerSubtitle}>Administra nombres y contraseñas</Text>
+        <Text style={styles.headerSubtitle}>Administra nombres y restablecimientos de contraseña</Text>
         <View style={styles.searchBox}>
           <Ionicons name="search-outline" size={18} color={colors.surface} />
           <TextInput
@@ -189,77 +172,9 @@ export default function AdminUsersScreen({ user }: AdminUsersScreenProps) {
                   <Text style={styles.confirmButtonText}>Guardar</Text>
                 </TouchableOpacity>
               </View>
-              <TouchableOpacity style={styles.linkButton} onPress={() => { setShowEditName(false); setShowEditPassword(true); }}>
-                <Text style={styles.linkButtonText}>¿Quieres cambiar la contraseña?</Text>
+              <TouchableOpacity style={styles.linkButton} onPress={sendResetLinkToSelected}>
+                <Text style={styles.linkButtonText}>Enviar enlace de restablecimiento</Text>
               </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal cambiar contraseña */}
-      <Modal visible={showEditPassword} transparent animationType="fade" onRequestClose={() => setShowEditPassword(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Cambiar Contraseña</Text>
-              <TouchableOpacity onPress={() => setShowEditPassword(false)}>
-                <Ionicons name="close" size={22} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.modalBody}>
-              <Text style={styles.inputLabel}>Contraseña actual del usuario</Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={passwordEdit.currentPassword}
-                  onChangeText={(t) => setPasswordEdit((p) => ({ ...p, currentPassword: t }))}
-                  placeholder="Ingresa la contraseña actual del usuario"
-                  placeholderTextColor={colors.textSecondary}
-                  secureTextEntry={!passwordEdit.showCurrent}
-                />
-                <TouchableOpacity style={styles.eyeButton} onPress={() => setPasswordEdit((p) => ({ ...p, showCurrent: !p.showCurrent }))}>
-                  <Ionicons name={passwordEdit.showCurrent ? 'eye-outline' : 'eye-off-outline'} size={22} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.inputLabel}>Nueva contraseña</Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={passwordEdit.newPassword}
-                  onChangeText={(t) => setPasswordEdit((p) => ({ ...p, newPassword: t }))}
-                  placeholder="Ingresa la nueva contraseña"
-                  placeholderTextColor={colors.textSecondary}
-                  secureTextEntry={!passwordEdit.showNew}
-                />
-                <TouchableOpacity style={styles.eyeButton} onPress={() => setPasswordEdit((p) => ({ ...p, showNew: !p.showNew }))}>
-                  <Ionicons name={passwordEdit.showNew ? 'eye-outline' : 'eye-off-outline'} size={22} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.inputLabel}>Confirmar contraseña</Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={passwordEdit.confirmPassword}
-                  onChangeText={(t) => setPasswordEdit((p) => ({ ...p, confirmPassword: t }))}
-                  placeholder="Confirma la contraseña"
-                  placeholderTextColor={colors.textSecondary}
-                  secureTextEntry={!passwordEdit.showConfirm}
-                />
-                <TouchableOpacity style={styles.eyeButton} onPress={() => setPasswordEdit((p) => ({ ...p, showConfirm: !p.showConfirm }))}>
-                  <Ionicons name={passwordEdit.showConfirm ? 'eye-outline' : 'eye-off-outline'} size={22} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.modalButtons}>
-                <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setShowEditPassword(false)}>
-                  <Text style={styles.cancelButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={submitPasswordChange}>
-                  <Text style={styles.confirmButtonText}>Guardar</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </View>
         </View>
